@@ -1,0 +1,13 @@
+# Ignore python cache
+__pycache__/
+*.pyc
+
+# Ignore test screenshots and logs from our automation
+test_*.png
+level_*.png
+test_results.txt
+doc_text.txt
+debug_ai.py
+
+# Ignore node_modules if you ever add npm
+node_modules/

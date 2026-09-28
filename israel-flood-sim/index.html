@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Israel Flooding Simulation</title>
+    
+    <!-- CesiumJS from CDN -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    
+    <div id="ui-panel">
+        <h2>Flood Controls</h2>
+        <div class="control-group">
+            <label for="sea-level">Sea Level: <span id="sea-level-value">0</span> m</label>
+            <input type="range" id="sea-level" min="0" max="500" value="0" step="1">
+        </div>
+        <p class="note">Using Cesium World Terrain. Physics sim to be added in next phase.</p>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

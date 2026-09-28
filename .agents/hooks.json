@@ -1,0 +1,17 @@
+{
+  "smart-auto-approver-v3": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/auto_approve.py",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

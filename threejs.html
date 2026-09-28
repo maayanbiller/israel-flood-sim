@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Custom 3D Flooding Sim</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a2e; font-family: sans-serif; }
+        #ui { 
+            position: absolute; 
+            top: 20px; 
+            left: 20px; 
+            background: rgba(15, 15, 30, 0.85); 
+            color: #fff; 
+            padding: 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        h2 { margin: 0 0 10px 0; font-size: 1.2rem; }
+        .controls { display: flex; flex-direction: column; gap: 10px; }
+        label { font-size: 0.9rem; color: #aaa; }
+    </style>
+    <!-- Three.js and OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="ui">
+        <h2>Flood Controls</h2>
+        <div class="controls">
+            <label>Sea Level: <span id="val">0</span> meters</label>
+            <input type="range" id="seaLevel" min="0" max="1500" value="0" style="width:250px;">
+        </div>
+    </div>
+    
+    <script>
+        // 1. Scene Setup
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x1a1a2e, 0.003); // Matches background
+        
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 100, 120);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; // Don't allow camera to go below ground
+        
+        // 2. Load Local Data (NASA/AWS DEM + ArcGIS Satellite)
+        const textureLoader = new THREE.TextureLoader();
+        const satTexture = textureLoader.load('data/sat.jpg');
+        const elevTexture = textureLoader.load('data/elev.png');
+        
+        // 3. Custom Terrain Shader
+        // This shader reads the actual elevation data pixel-by-pixel to displace the 3D mesh
+        const terrainUniforms = {
+            tDiffuse: { value: satTexture },
+            tElevation: { value: elevTexture },
+            exaggeration: { value: 3.0 } // Exaggerate mountains by 3x
+        };
+        
+        const vertexShader = `
+            uniform sampler2D tElevation;
+            uniform float exaggeration;
+            varying vec2 vUv;
+            varying float vHeight;
+            
+            void main() {
+                vUv = uv;
+                
+                // Read elevation RGB from Mapzen Terrarium format
+                vec4 elev = texture2D(tElevation, uv);
+                
+                // Decode to meters: elevation = (red * 256 + green + blue / 256) - 32768
+                float heightMeters = (elev.r * 255.0 * 256.0 + elev.g * 255.0 + elev.b * 255.0 / 256.0) - 32768.0;
+                
+                vHeight = heightMeters;
+                
+                // Scale the height for our 3D world view (0.005 is a scaling factor for aesthetics)
+                float scaledHeight = heightMeters * 0.005 * exaggeration;
+                
+                vec3 newPosition = position + normal * scaledHeight;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+            }
+        `;
+        
+        const fragmentShader = `
+            uniform sampler2D tDiffuse;
+            varying vec2 vUv;
+            varying float vHeight;
+            
+            void main() {
+                vec4 color = texture2D(tDiffuse, vUv);
+                gl_FragColor = color;
+            }
+        `;
+        
+        const terrainMaterial = new THREE.ShaderMaterial({
+            uniforms: terrainUniforms,
+            vertexShader: vertexShader,
+            fragmentShader: fragmentShader,
+            side: THREE.DoubleSide
+        });
+        
+        // Create a highly detailed plane (256x256 segments = 65,000 vertices)
+        const geometry = new THREE.PlaneGeometry(200, 200, 255, 255);
+        geometry.rotateX(-Math.PI / 2); // Lay it flat
+        
+        const terrain = new THREE.Mesh(geometry, terrainMaterial);
+        scene.add(terrain);
+        
+        // 4. Water Plane
+        const waterGeo = new THREE.PlaneGeometry(200, 200);
+        waterGeo.rotateX(-Math.PI / 2);
+        const waterMat = new THREE.MeshBasicMaterial({
+            color: 0x0055ff,
+            transparent: true,
+            opacity: 0.5,
+            side: THREE.DoubleSide
+        });
+        const water = new THREE.Mesh(waterGeo, waterMat);
+        
+        // The Dead Sea is roughly -430m. Let's start the water slightly above 0 for testing
+        const initialWaterLevelMeters = 0;
+        water.position.y = initialWaterLevelMeters * 0.005 * terrainUniforms.exaggeration.value;
+        scene.add(water);
+        
+        // 5. Interaction
+        const slider = document.getElementById('seaLevel');
+        const valLabel = document.getElementById('val');
+        slider.addEventListener('input', (e) => {
+            const val = e.target.value;
+            valLabel.innerText = val;
+            
+            // Move water up based on the same scaling math used in the terrain vertex shader
+            water.position.y = (val * 0.005 * terrainUniforms.exaggeration.value);
+        });
+
+        // 6. Animation Loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

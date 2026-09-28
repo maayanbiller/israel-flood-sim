@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Custom 3D Flooding Sim (Full Country + Physics)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a2e; font-family: sans-serif; }
+        #ui { 
+            position: absolute; 
+            top: 20px; 
+            left: 20px; 
+            background: rgba(15, 15, 30, 0.85); 
+            color: #fff; 
+            padding: 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.1);
+            width: 300px;
+        }
+        h2 { margin: 0 0 10px 0; font-size: 1.2rem; }
+        .controls { display: flex; flex-direction: column; gap: 10px; }
+        label { font-size: 0.9rem; color: #aaa; }
+        #loading { color: #ffeb3b; font-weight: bold; }
+    </style>
+    <!-- Three.js and OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="ui">
+        <h2>Flood Controls</h2>
+        <div id="loading">Loading Map Data... Please wait.</div>
+        <div class="controls" id="controls" style="display:none;">
+            <label>Sea Level: <span id="val">0</span> meters</label>
+            <input type="range" id="seaLevel" min="0" max="1500" value="0" style="width: 100%;">
+            <p style="font-size: 0.8rem; color: #888;">Only regions connected to the ocean will flood.</p>
+        </div>
+    </div>
+    
+    <script>
+        // 1. Scene Setup
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x1a1a2e, 0.003); 
+        
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 120, 150);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; 
+        
+        // 2. Load Local Data
+        const textureLoader = new THREE.TextureLoader();
+        const satTexture = textureLoader.load('data/sat.jpg', () => { checkLoad(); });
+        const elevTexture = textureLoader.load('data/elev.png', () => { checkLoad(); });
+        
+        let loadedCount = 0;
+        let elevationData = null; // Float32Array
+        let maskData = null; // Uint8Array
+        let maskTexture = null;
+        let imgW = 768; // 3 columns * 256
+        let imgH = 1280; // 5 rows * 256
+        
+        function checkLoad() {
+            loadedCount++;
+            if (loadedCount === 2) {
+                initTerrain();
+            }
+        }
+        
+        // 3. Process Elevation data on CPU for Flood Fill
+        function initTerrain() {
+            const img = elevTexture.image;
+            imgW = img.width;
+            imgH = img.height;
+            
+            // Draw to canvas to get pixels
+            const canvas = document.createElement('canvas');
+            canvas.width = imgW;
+            canvas.height = imgH;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const imgData = ctx.getImageData(0, 0, imgW, imgH).data;
+            
+            elevationData = new Float32Array(imgW * imgH);
+            maskData = new Uint8Array(imgW * imgH);
+            
+            for (let i = 0; i < imgW * imgH; i++) {
+                const r = imgData[i*4];
+                const g = imgData[i*4+1];
+                const b = imgData[i*4+2];
+                // Decode mapzen terrarium
+                elevationData[i] = (r * 256.0 + g + b / 256.0) - 32768.0;
+            }
+            
+            // Create a DataTexture for the mask
+            maskTexture = new THREE.DataTexture(maskData, imgW, imgH, THREE.LuminanceFormat, THREE.UnsignedByteType);
+            maskTexture.magFilter = THREE.NearestFilter;
+            maskTexture.minFilter = THREE.NearestFilter;
+            maskTexture.needsUpdate = true;
+            
+            buildMeshes();
+            updateFloodMask(0); // Initial flood fill at 0m
+            
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('controls').style.display = 'flex';
+        }
+        
+        // Flood fill algorithm
+        function updateFloodMask(seaLevel) {
+            if (!elevationData) return;
+            
+            // Reset mask
+            for (let i = 0; i < maskData.length; i++) maskData[i] = 0;
+            
+            const queue = new Int32Array(imgW * imgH); 
+            let head = 0;
+            let tail = 0;
+            
+            // Seed the top-left corner (Mediterranean Sea)
+            queue[tail++] = 0;
+            maskData[0] = 255; // 255 normalizes to 1.0 in WebGL
+            
+            // Seed the bottom edge (Gulf of Aqaba / Red Sea)
+            const redSeaIdx = (imgH - 1) * imgW + 400;
+            if (elevationData[redSeaIdx] <= seaLevel) {
+                queue[tail++] = redSeaIdx;
+                maskData[redSeaIdx] = 255;
+            }
+            
+            const dirs = [-1, 1, -imgW, imgW];
+            
+            while (head < tail) {
+                const idx = queue[head++];
+                const x = idx % imgW;
+                
+                for (let d = 0; d < 4; d++) {
+                    if (d === 0 && x === 0) continue; 
+                    if (d === 1 && x === imgW - 1) continue;
+                    
+                    const nIdx = idx + dirs[d];
+                    
+                    if (nIdx >= 0 && nIdx < elevationData.length) {
+                        if (maskData[nIdx] === 0 && elevationData[nIdx] <= seaLevel) {
+                            maskData[nIdx] = 255;
+                            queue[tail++] = nIdx;
+                        }
+                    }
+                }
+            }
+            
+            maskTexture.needsUpdate = true;
+        }
+        
+        let terrainUniforms = null;
+        let water = null;
+        
+        function buildMeshes() {
+            // Fix the flipY bug! DataTextures are upside-down compared to image textures in WebGL
+            maskTexture.flipY = true;
+            
+            // Exaggeration drastically reduced to 0.5 based on feedback
+            terrainUniforms = {
+                tDiffuse: { value: satTexture },
+                tElevation: { value: elevTexture },
+                exaggeration: { value: 0.5 }
+            };
+            
+            const vertexShader = `
+                uniform sampler2D tElevation;
+                uniform float exaggeration;
+                varying vec2 vUv;
+                
+                void main() {
+                    vUv = uv;
+                    vec4 elev = texture2D(tElevation, uv);
+                    float heightMeters = (elev.r * 255.0 * 256.0 + elev.g * 255.0 + elev.b * 255.0 / 256.0) - 32768.0;
+                    float scaledHeight = heightMeters * 0.005 * exaggeration;
+                    vec3 newPosition = position + normal * scaledHeight;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+                }
+            `;
+            
+            const fragmentShader = `
+                uniform sampler2D tDiffuse;
+                varying vec2 vUv;
+                void main() {
+                    gl_FragColor = texture2D(tDiffuse, vUv);
+                }
+            `;
+            
+            const terrainMaterial = new THREE.ShaderMaterial({
+                uniforms: terrainUniforms,
+                vertexShader: vertexShader,
+                fragmentShader: fragmentShader,
+                side: THREE.DoubleSide
+            });
+            
+            // Our stitched image aspect ratio is 3 cols x 5 rows = 0.6
+            // We use a plane of 120 width x 200 height
+            const geometry = new THREE.PlaneGeometry(120, 200, 255, 255);
+            geometry.rotateX(-Math.PI / 2);
+            
+            const terrain = new THREE.Mesh(geometry, terrainMaterial);
+            scene.add(terrain);
+            
+            // Water plane that conforms to the terrain but only where mask > 0
+            const waterUniforms = {
+                tElevation: { value: elevTexture },
+                tMask: { value: maskTexture },
+                exaggeration: { value: 0.5 },
+                seaLevel: { value: 0.0 }
+            };
+            
+            const waterVert = `
+                uniform sampler2D tElevation;
+                uniform sampler2D tMask;
+                uniform float exaggeration;
+                uniform float seaLevel;
+                varying vec2 vUv;
+                varying float vMask;
+                
+                void main() {
+                    vUv = uv;
+                    vMask = texture2D(tMask, uv).r; // 0.0 or 1.0
+                    
+                    // Add a tiny +1.0m offset to prevent Z-fighting with the terrain
+                    float height = vMask > 0.5 ? (seaLevel + 1.0) : 0.0;
+                    float scaledHeight = height * 0.005 * exaggeration;
+                    
+                    vec3 newPosition = position + normal * scaledHeight;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+                }
+            `;
+            
+            const waterFrag = `
+                varying float vMask;
+                void main() {
+                    if (vMask < 0.5) discard; // Don't draw water if not flooded
+                    gl_FragColor = vec4(0.0, 0.4, 1.0, 0.7); // Semi-transparent blue
+                }
+            `;
+            
+            const waterMaterial = new THREE.ShaderMaterial({
+                uniforms: waterUniforms,
+                vertexShader: waterVert,
+                fragmentShader: waterFrag,
+                transparent: true,
+                side: THREE.DoubleSide
+            });
+            
+            water = new THREE.Mesh(geometry, waterMaterial);
+            scene.add(water);
+            
+            // UI listener
+            const slider = document.getElementById('seaLevel');
+            const valLabel = document.getElementById('val');
+            slider.addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value);
+                valLabel.innerText = val;
+                
+                // Fast JS Flood Fill
+                updateFloodMask(val);
+                
+                // Update shader
+                waterUniforms.seaLevel.value = val;
+            });
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // --- AUTOMATED SELF-TEST ---
+        function reportTest(type, message) {
+            fetch('http://localhost:8081', {
+                method: 'POST',
+                body: JSON.stringify({type, message})
+            }).catch(e => console.error("Test log failed to send"));
+        }
+        
+        setTimeout(() => {
+            try {
+                if (!elevationData) {
+                    reportTest('ERROR', 'Images failed to load within 5 seconds.');
+                    return;
+                }
+                reportTest('SUCCESS', 'Images loaded successfully and elevation array built.');
+                
+                // Test the BFS
+                updateFloodMask(100); // 100m sea level
+                
+                // Check if Mediterranean is flooded (index 0)
+                const isMedFlooded = maskData[0] === 1;
+                
+                // Check Dead Sea. Rough coordinate: X is towards right (let's say 70%), Y is towards bottom (let's say 60%)
+                // Since imgW is 768 and imgH is 1280.
+                // Dead Sea is roughly at Lon 35.5, Lat 31.5. 
+                // X range is 32.3 to 36.5. 35.5 is at (35.5 - 32.3) / 4.2 = ~76% width.
+                // Y range is 33.5 down to 29.5. 31.5 is at (33.5 - 31.5) / 4.0 = 50% height.
+                const dsX = Math.floor(imgW * 0.76);
+                const dsY = Math.floor(imgH * 0.50);
+                const dsIdx = dsY * imgW + dsX;
+                const dsElev = elevationData[dsIdx];
+                const isDsFlooded = maskData[dsIdx] === 1;
+                
+                reportTest('INFO', `Dead Sea pixel elevation is ${dsElev}m.`);
+                
+                if (isMedFlooded && !isDsFlooded && dsElev < 100) {
+                    reportTest('SUCCESS', 'Physics Test Passed! Mediterranean flooded, Dead Sea stayed dry despite being below sea level.');
+                } else {
+                    reportTest('ERROR', `Physics Test Failed! MedFlooded:${isMedFlooded}, DsFlooded:${isDsFlooded}, DsElev:${dsElev}`);
+                }
+                
+                // Test Shader
+                if (scene.children.length >= 2) {
+                    reportTest('SUCCESS', 'WebGL Scene and Shaders compiled and initialized successfully.');
+                }
+            } catch (err) {
+                reportTest('ERROR', err.toString());
+            }
+        }, 5000); // Wait 5 seconds for images to load
+    </script>
+</body>
+</html>
