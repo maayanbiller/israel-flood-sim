@@ -2,38 +2,61 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Custom 3D Flooding Sim (Full Country + Physics)</title>
-    <style>
-        body { margin: 0; overflow: hidden; background: #1a1a2e; font-family: sans-serif; }
-        #ui { 
-            position: absolute; 
-            top: 20px; 
-            left: 20px; 
-            background: rgba(15, 15, 30, 0.85); 
-            color: #fff; 
-            padding: 20px; 
-            border-radius: 12px; 
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-            border: 1px solid rgba(255,255,255,0.1);
-            width: 300px;
-        }
-        h2 { margin: 0 0 10px 0; font-size: 1.2rem; }
-        .controls { display: flex; flex-direction: column; gap: 10px; }
-        label { font-size: 0.9rem; color: #aaa; }
-        #loading { color: #ffeb3b; font-weight: bold; }
-    </style>
-    <!-- Three.js and OrbitControls -->
+    <title>Israel Flood Simulator</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            /* Beautiful night sky gradient */
+            background: linear-gradient(to bottom, #0a1a3a 0%, #090a0f 100%);
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            background: rgba(15, 12, 41, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 320px;
+        }
+        h2 { margin: 0 0 15px 0; font-weight: 400; letter-spacing: 1px; }
+        .controls { display: flex; flex-direction: column; gap: 10px; }
+        label { font-size: 0.9rem; color: #ccc; }
+        input[type="range"] {
+            -webkit-appearance: none; width: 100%; height: 6px;
+            background: #333; border-radius: 3px; outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 16px; height: 16px;
+            background: #007bff; border-radius: 50%; cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 123, 255, 0.5);
+        }
+        #loading {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.5rem; font-weight: 300; letter-spacing: 2px;
+            color: #007bff;
+        }
+    </style>
 </head>
 <body>
+    <div id="loading">GENERATING NEXT-GEN TERRAIN...</div>
     <div id="ui">
         <h2>Flood Controls</h2>
-        <div id="loading">Loading Map Data... Please wait.</div>
         <div class="controls" id="controls" style="display:none;">
             <label>Sea Level: <span id="val">0</span> meters</label>
-            <input type="range" id="seaLevel" min="0" max="1500" value="0" style="width: 100%;">
-            <label style="margin-top: 5px; font-size: 1rem;"><input type="checkbox" id="magmaMode"> 🔥 Magma Mode</label>
+            <input type="range" id="seaLevel" min="0" max="1500" value="0">
+            <label style="margin-top: 5px; font-size: 1rem; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="magmaMode" style="width: 16px; height: 16px;"> 🔥 Magma Mode
+            </label>
             <p style="font-size: 0.8rem; color: #888;">Only regions connected to the ocean will flood.</p>
         </div>
     </div>
@@ -41,48 +64,49 @@
     <script>
         // 1. Scene Setup
         const scene = new THREE.Scene();
-        // Thick dark fog perfectly matches the void skirt to hide map edges and simulate an infinite horizon!
-        scene.fog = new THREE.FogExp2(0x111116, 0.015); 
+        // Fog exactly matches the CSS background bottom color to create an infinite atmospheric horizon
+        scene.fog = new THREE.FogExp2(0x090a0f, 0.012); 
         
-        const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 2000);
-        camera.position.set(0, 120, 150);
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 4000);
+        camera.position.set(0, 80, 180);
         
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000000, 0); // Transparent to show CSS gradient sky!
         document.body.appendChild(renderer.domElement);
         
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        controls.maxPolarAngle = Math.PI / 2 - 0.01; // Allow horizon views again since the fog hides the edge!
-        controls.minDistance = 10;
-        controls.maxDistance = 300; 
+        controls.maxPolarAngle = Math.PI / 2 - 0.02; 
+        controls.minDistance = 5;
+        controls.maxDistance = 400; 
+        controls.enablePan = false; // Block going underground entirely!
         
         // 2. Load Local Data
         const textureLoader = new THREE.TextureLoader();
-        const satTexture = textureLoader.load('data/sat.jpg', () => { checkLoad(); });
-        const elevTexture = textureLoader.load('data/elev.png', () => { checkLoad(); });
+        const satTexture = textureLoader.load('data/sat.jpg', () => checkLoad());
+        const elevTexture = textureLoader.load('data/elev.png', () => checkLoad());
+        
+        satTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        elevTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
         
         let loadedCount = 0;
-        let elevationData = null; // Float32Array
-        let maskData = null; // Uint8Array
+        let elevationData = null; 
+        let maskData = null; 
         let maskTexture = null;
-        let imgW = 768; // 3 columns * 256
-        let imgH = 1280; // 5 rows * 256
+        let imgW = 768; 
+        let imgH = 1280; 
         
         function checkLoad() {
             loadedCount++;
-            if (loadedCount === 2) {
-                initTerrain();
-            }
+            if (loadedCount === 2) initTerrain();
         }
         
-        // 3. Process Elevation data on CPU for Flood Fill
         function initTerrain() {
             const img = elevTexture.image;
             imgW = img.width;
             imgH = img.height;
             
-            // Draw to canvas to get pixels
             const canvas = document.createElement('canvas');
             canvas.width = imgW;
             canvas.height = imgH;
@@ -97,39 +121,32 @@
                 const r = imgData[i*4];
                 const g = imgData[i*4+1];
                 const b = imgData[i*4+2];
-                // Decode mapzen terrarium
                 elevationData[i] = (r * 256.0 + g + b / 256.0) - 32768.0;
             }
             
-            // Create a DataTexture for the mask
             maskTexture = new THREE.DataTexture(maskData, imgW, imgH, THREE.LuminanceFormat, THREE.UnsignedByteType);
             maskTexture.magFilter = THREE.NearestFilter;
             maskTexture.minFilter = THREE.NearestFilter;
             maskTexture.needsUpdate = true;
             
             buildMeshes();
-            updateFloodMask(0); // Initial flood fill at 0m
+            updateFloodMask(0); 
             
             document.getElementById('loading').style.display = 'none';
             document.getElementById('controls').style.display = 'flex';
         }
         
-        // Flood fill algorithm
         function updateFloodMask(seaLevel) {
             if (!elevationData) return;
-            
-            // Reset mask
             for (let i = 0; i < maskData.length; i++) maskData[i] = 0;
             
             const queue = new Int32Array(imgW * imgH); 
             let head = 0;
             let tail = 0;
             
-            // Seed the top-left corner (Mediterranean Sea)
             queue[tail++] = 0;
-            maskData[0] = 255; // 255 normalizes to 1.0 in WebGL
+            maskData[0] = 255; 
             
-            // Seed the bottom edge (Gulf of Aqaba / Red Sea)
             const redSeaIdx = (imgH - 1) * imgW + 400;
             if (elevationData[redSeaIdx] <= seaLevel) {
                 queue[tail++] = redSeaIdx;
@@ -156,7 +173,6 @@
                     }
                 }
             }
-            
             maskTexture.needsUpdate = true;
         }
         
@@ -164,16 +180,15 @@
         let water = null;
         
         function buildMeshes() {
-            // Fix the flipY bug! DataTextures are upside-down compared to image textures in WebGL
             maskTexture.flipY = true;
             
-            // Exaggeration drastically reduced to 0.5 based on feedback
             terrainUniforms = {
                 tDiffuse: { value: satTexture },
                 tElevation: { value: elevTexture },
                 exaggeration: { value: 0.5 }
             };
             
+            // NEXT-GEN TERRAIN: Calculate real normals for dynamic lighting
             const vertexShader = `
                 uniform sampler2D tElevation;
                 uniform float exaggeration;
@@ -191,9 +206,40 @@
             
             const fragmentShader = `
                 uniform sampler2D tDiffuse;
+                uniform sampler2D tElevation;
+                uniform float exaggeration;
                 varying vec2 vUv;
+                
                 void main() {
-                    gl_FragColor = texture2D(tDiffuse, vUv);
+                    vec4 texColor = texture2D(tDiffuse, vUv);
+                    
+                    // Generate normals via finite difference for high-quality lighting
+                    vec2 texel = vec2(1.0 / 768.0, 1.0 / 1280.0);
+                    
+                    float hL = (texture2D(tElevation, vUv - vec2(texel.x, 0.0)).r * 255.0 * 256.0 + texture2D(tElevation, vUv - vec2(texel.x, 0.0)).g * 255.0) - 32768.0;
+                    float hR = (texture2D(tElevation, vUv + vec2(texel.x, 0.0)).r * 255.0 * 256.0 + texture2D(tElevation, vUv + vec2(texel.x, 0.0)).g * 255.0) - 32768.0;
+                    float hD = (texture2D(tElevation, vUv - vec2(0.0, texel.y)).r * 255.0 * 256.0 + texture2D(tElevation, vUv - vec2(0.0, texel.y)).g * 255.0) - 32768.0;
+                    float hU = (texture2D(tElevation, vUv + vec2(0.0, texel.y)).r * 255.0 * 256.0 + texture2D(tElevation, vUv + vec2(0.0, texel.y)).g * 255.0) - 32768.0;
+                    
+                    float zScale = 0.005 * exaggeration;
+                    vec3 va = normalize(vec3(texel.x * 120.0, 0.0, (hR - hL) * zScale));
+                    vec3 vb = normalize(vec3(0.0, texel.y * 200.0, (hU - hD) * zScale));
+                    vec3 normal = normalize(cross(va, vb));
+                    
+                    // Warm evening sunlight casting deep, realistic shadows
+                    vec3 sunDir = normalize(vec3(-1.0, 0.4, 0.5));
+                    float diff = max(dot(normal, sunDir), 0.0);
+                    
+                    // Atmospheric scattering ambient light
+                    vec3 ambient = vec3(0.3, 0.4, 0.6); 
+                    vec3 diffuse = vec3(1.2, 1.0, 0.8) * diff * 1.5;
+                    
+                    vec3 finalColor = texColor.rgb * (ambient + diffuse);
+                    
+                    // Brighten the deserts slightly
+                    finalColor *= 1.2;
+                    
+                    gl_FragColor = vec4(finalColor, 1.0);
                 }
             `;
             
@@ -204,23 +250,14 @@
                 side: THREE.DoubleSide
             });
             
-            // Our stitched image aspect ratio is 3 cols x 5 rows = 0.6
-            // We use a plane of 120 width x 200 height
             const geometry = new THREE.PlaneGeometry(120, 200, 511, 511);
             geometry.rotateX(-Math.PI / 2);
             
             const terrain = new THREE.Mesh(geometry, terrainMaterial);
             scene.add(terrain);
             
-            // Widen the horizon by adding a massive background skirt. Optimized to 1x1 geometry per Efficiency Reviewer!
-            const skirtGeo = new THREE.PlaneGeometry(4000, 4000, 1, 1);
-            skirtGeo.rotateX(-Math.PI / 2);
-            const skirtMat = new THREE.MeshBasicMaterial({ color: 0x111116 }); // Dark void
-            const skirt = new THREE.Mesh(skirtGeo, skirtMat);
-            skirt.position.y = -5; // Just below the lowest terrain
-            scene.add(skirt);
-            
-            // Water plane that conforms to the terrain but only where mask > 0
+            // Remove the dark skirt plane entirely! Let the fog and skybox handle the infinite void.
+
             const waterUniforms = {
                 tElevation: { value: elevTexture },
                 tMask: { value: maskTexture },
@@ -230,20 +267,27 @@
                 isMagma: { value: 0.0 }
             };
             
+            // PHYSICALLY ANIMATED WAVES via Vertex Displacement
             const waterVert = `
                 uniform sampler2D tElevation;
                 uniform sampler2D tMask;
                 uniform float exaggeration;
                 uniform float seaLevel;
+                uniform float u_time;
+                uniform float isMagma;
                 varying vec2 vUv;
                 varying float vMask;
                 
                 void main() {
                     vUv = uv;
-                    vMask = texture2D(tMask, uv).r; // 0.0 or 1.0
+                    vMask = texture2D(tMask, uv).r; 
                     
-                    // Add a tiny +1.0m offset to prevent Z-fighting with the terrain
-                    float height = vMask > 0.5 ? (seaLevel + 1.0) : 0.0;
+                    // Physically animate the vertex height for rolling waves!
+                    float wave = sin(uv.x * 60.0 + u_time * 2.0) * cos(uv.y * 60.0 + u_time * 1.5) * 0.3;
+                    float magmaWave = sin(uv.x * 20.0 + u_time * 0.5) * 0.5;
+                    float finalWave = isMagma < 0.5 ? wave : magmaWave;
+                    
+                    float height = vMask > 0.5 ? (seaLevel + 1.0 + finalWave) : 0.0;
                     float scaledHeight = height * 0.005 * exaggeration;
                     
                     vec3 newPosition = position + normal * scaledHeight;
@@ -259,7 +303,6 @@
                 varying vec2 vUv;
                 varying float vMask;
                 
-                // Simple 2D noise for waves and magma crust
                 float hash(vec2 p) {
                     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
                 }
@@ -276,57 +319,61 @@
                 }
                 
                 void main() {
-                    if (vMask < 0.5) discard; // Don't draw water if not flooded
+                    if (vMask < 0.5) discard; 
                     
-                    // Fetch terrain elevation
                     vec4 elevData = texture2D(tElevation, vUv);
                     float elevation = (elevData.r * 255.0 * 256.0 + elevData.g * 255.0 + elevData.b * 255.0 / 256.0) - 32768.0;
-                    
-                    // Calculate depth
                     float depth = max(0.0, seaLevel - elevation);
                     
-                    // Color gradient: Cyan->Blue for water, Yellow->Red for Magma
-                    vec3 shallowColor = mix(vec3(0.0, 0.7, 0.8), vec3(1.0, 0.8, 0.0), isMagma);
-                    vec3 deepColor = mix(vec3(0.0, 0.2, 0.5), vec3(0.8, 0.1, 0.0), isMagma);
+                    // WATER COLORS
+                    vec3 shallowWater = vec3(0.0, 0.8, 0.9);
+                    vec3 deepWater = vec3(0.0, 0.1, 0.4);
                     float depthFactor = clamp(depth / 150.0, 0.0, 1.0);
-                    vec3 baseColor = mix(shallowColor, deepColor, depthFactor);
+                    vec3 waterColor = mix(shallowWater, deepWater, depthFactor);
                     
-                    // Generate wave/lava normals
-                    vec2 waveUv = vUv * 400.0;
-                    float n1 = noise(waveUv + u_time * 0.5);
-                    float n2 = noise(waveUv * 2.0 - u_time * 0.7);
+                    // MAGMA COLORS (Gorgeously overhauled)
+                    vec3 magmaEdge = vec3(1.0, 0.2, 0.0); // Deep red hot edge
+                    vec3 magmaCore = vec3(1.0, 0.9, 0.3); // Blinding yellow core
+                    
+                    vec2 waveUv = vUv * 500.0;
+                    float n1 = noise(waveUv + u_time * 0.8);
+                    float n2 = noise(waveUv * 2.5 - u_time * 1.1);
                     
                     vec3 normal = normalize(vec3(
                         noise(waveUv + vec2(0.1, 0.0)) - noise(waveUv - vec2(0.1, 0.0)),
                         noise(waveUv + vec2(0.0, 0.1)) - noise(waveUv - vec2(0.0, 0.1)),
-                        1.5 
+                        1.2 
                     ));
                     
-                    // Sun specular reflection (Water only)
                     vec3 sunDir = normalize(vec3(1.0, 1.0, 0.8));
                     vec3 viewDir = normalize(vec3(0.0, -1.0, 1.0)); 
                     vec3 halfVector = normalize(sunDir + viewDir);
-                    float specular = pow(max(dot(normal, halfVector), 0.0), 30.0) * (1.0 - isMagma);
                     
-                    // Foam near shore (Water only)
+                    float specular = pow(max(dot(normal, halfVector), 0.0), 40.0) * (1.0 - isMagma);
+                    
                     float foam = 0.0;
-                    if (depth < 15.0 && isMagma < 0.5) {
-                        foam = smoothstep(0.4, 1.0, noise(waveUv * 3.0 + u_time * 1.2)) * (1.0 - depth/15.0);
+                    if (depth < 12.0 && isMagma < 0.5) {
+                        foam = smoothstep(0.3, 1.0, noise(waveUv * 4.0 + u_time * 2.0)) * (1.0 - depth/12.0);
                     }
                     
-                    vec3 finalColor = baseColor + vec3(specular * 0.6) + vec3(foam * 0.8);
+                    vec3 finalColor = waterColor + vec3(specular * 0.8) + vec3(foam);
                     
-                    // Magma Crust (Magma only)
                     if (isMagma > 0.5) {
-                        float crust = noise(waveUv * 1.5 + u_time * 0.15);
-                        // Add dark rocky crust patches
-                        finalColor = mix(finalColor, vec3(0.1, 0.05, 0.02), smoothstep(0.5, 0.8, crust));
-                        // Add emissive intense glow
-                        finalColor += vec3(0.3, 0.1, 0.0);
+                        // Smoothly animated lava swirls
+                        float lavaFlow = noise(vUv * 80.0 + u_time * 0.3);
+                        float crustNoise = noise(vUv * 300.0 - u_time * 0.1);
+                        
+                        // Core vs Edge heating
+                        vec3 magmaColor = mix(magmaEdge, magmaCore, smoothstep(0.2, 0.8, lavaFlow));
+                        
+                        // Solidified dark rock crust
+                        float crustThreshold = smoothstep(0.4, 0.7, crustNoise);
+                        vec3 crustColor = vec3(0.05, 0.02, 0.01);
+                        
+                        finalColor = mix(magmaColor * 1.5, crustColor, crustThreshold);
                     }
                     
-                    // Alpha blending: Magma is 100% opaque, water gets transparent in shallows
-                    float alpha = mix(clamp(depth / 20.0, 0.5, 0.9), 1.0, isMagma);
+                    float alpha = mix(clamp(depth / 15.0, 0.6, 0.95), 1.0, isMagma);
                     
                     gl_FragColor = vec4(finalColor, alpha);
                 }
@@ -343,7 +390,6 @@
             water = new THREE.Mesh(geometry, waterMaterial);
             scene.add(water);
             
-            // UI listeners
             const slider = document.getElementById('seaLevel');
             const valLabel = document.getElementById('val');
             slider.addEventListener('input', (e) => {
@@ -375,56 +421,6 @@
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
-        
-        // --- AUTOMATED SELF-TEST ---
-        function reportTest(type, message) {
-            fetch('http://localhost:8081', {
-                method: 'POST',
-                body: JSON.stringify({type, message})
-            }).catch(e => console.error("Test log failed to send"));
-        }
-        
-        setTimeout(() => {
-            try {
-                if (!elevationData) {
-                    reportTest('ERROR', 'Images failed to load within 5 seconds.');
-                    return;
-                }
-                reportTest('SUCCESS', 'Images loaded successfully and elevation array built.');
-                
-                // Test the BFS
-                updateFloodMask(100); // 100m sea level
-                
-                // Check if Mediterranean is flooded (index 0)
-                const isMedFlooded = maskData[0] === 1;
-                
-                // Check Dead Sea. Rough coordinate: X is towards right (let's say 70%), Y is towards bottom (let's say 60%)
-                // Since imgW is 768 and imgH is 1280.
-                // Dead Sea is roughly at Lon 35.5, Lat 31.5. 
-                // X range is 32.3 to 36.5. 35.5 is at (35.5 - 32.3) / 4.2 = ~76% width.
-                // Y range is 33.5 down to 29.5. 31.5 is at (33.5 - 31.5) / 4.0 = 50% height.
-                const dsX = Math.floor(imgW * 0.76);
-                const dsY = Math.floor(imgH * 0.50);
-                const dsIdx = dsY * imgW + dsX;
-                const dsElev = elevationData[dsIdx];
-                const isDsFlooded = maskData[dsIdx] === 1;
-                
-                reportTest('INFO', `Dead Sea pixel elevation is ${dsElev}m.`);
-                
-                if (isMedFlooded && !isDsFlooded && dsElev < 100) {
-                    reportTest('SUCCESS', 'Physics Test Passed! Mediterranean flooded, Dead Sea stayed dry despite being below sea level.');
-                } else {
-                    reportTest('ERROR', `Physics Test Failed! MedFlooded:${isMedFlooded}, DsFlooded:${isDsFlooded}, DsElev:${dsElev}`);
-                }
-                
-                // Test Shader
-                if (scene.children.length >= 2) {
-                    reportTest('SUCCESS', 'WebGL Scene and Shaders compiled and initialized successfully.');
-                }
-            } catch (err) {
-                reportTest('ERROR', err.toString());
-            }
-        }, 5000); // Wait 5 seconds for images to load
     </script>
 </body>
 </html>
