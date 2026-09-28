@@ -213,7 +213,8 @@
                 tElevation: { value: elevTexture },
                 tMask: { value: maskTexture },
                 exaggeration: { value: 0.5 },
-                seaLevel: { value: 0.0 }
+                seaLevel: { value: 0.0 },
+                u_time: { value: 0.0 }
             };
             
             const waterVert = `
@@ -238,10 +239,75 @@
             `;
             
             const waterFrag = `
+                uniform sampler2D tElevation;
+                uniform float seaLevel;
+                uniform float u_time;
+                varying vec2 vUv;
                 varying float vMask;
+                
+                // Simple 2D noise for waves
+                float hash(vec2 p) {
+                    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+                }
+                
+                float noise(vec2 p) {
+                    vec2 i = floor(p);
+                    vec2 f = fract(p);
+                    f = f * f * (3.0 - 2.0 * f);
+                    return mix(
+                        mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), f.x),
+                        mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
+                        f.y
+                    );
+                }
+                
                 void main() {
                     if (vMask < 0.5) discard; // Don't draw water if not flooded
-                    gl_FragColor = vec4(0.0, 0.4, 1.0, 0.7); // Semi-transparent blue
+                    
+                    // Fetch terrain elevation
+                    vec4 elevData = texture2D(tElevation, vUv);
+                    float elevation = (elevData.r * 255.0 * 256.0 + elevData.g * 255.0 + elevData.b * 255.0 / 256.0) - 32768.0;
+                    
+                    // Calculate depth
+                    float depth = max(0.0, seaLevel - elevation);
+                    
+                    // Water color gradient based on depth (shallow = cyan, deep = dark blue)
+                    vec3 shallowColor = vec3(0.0, 0.7, 0.8);
+                    vec3 deepColor = vec3(0.0, 0.2, 0.5);
+                    float depthFactor = clamp(depth / 150.0, 0.0, 1.0);
+                    vec3 waterColor = mix(shallowColor, deepColor, depthFactor);
+                    
+                    // Generate wave normals
+                    vec2 waveUv = vUv * 400.0; // Scale UV for wave size
+                    float n1 = noise(waveUv + u_time * 0.5);
+                    float n2 = noise(waveUv * 2.0 - u_time * 0.7);
+                    
+                    // Pseudo-normal from noise gradient
+                    vec3 normal = normalize(vec3(
+                        noise(waveUv + vec2(0.1, 0.0)) - noise(waveUv - vec2(0.1, 0.0)),
+                        noise(waveUv + vec2(0.0, 0.1)) - noise(waveUv - vec2(0.0, 0.1)),
+                        1.5 // Flattens the normal slightly
+                    ));
+                    
+                    // Sun specular reflection
+                    vec3 sunDir = normalize(vec3(1.0, 1.0, 0.8));
+                    vec3 viewDir = normalize(vec3(0.0, -1.0, 1.0)); // Approximate view dir
+                    vec3 halfVector = normalize(sunDir + viewDir);
+                    
+                    float specular = pow(max(dot(normal, halfVector), 0.0), 30.0);
+                    
+                    // Foam near shore (depth < 15m)
+                    float foam = 0.0;
+                    if (depth < 15.0) {
+                        foam = smoothstep(0.4, 1.0, noise(waveUv * 3.0 + u_time * 1.2)) * (1.0 - depth/15.0);
+                    }
+                    
+                    vec3 finalColor = waterColor + vec3(specular * 0.6) + vec3(foam * 0.8);
+                    
+                    // Alpha blending: more transparent in shallow water
+                    float alpha = clamp(depth / 20.0, 0.5, 0.9);
+                    
+                    gl_FragColor = vec4(finalColor, alpha);
                 }
             `;
             
@@ -271,9 +337,13 @@
             });
         }
         
+        const clock = new THREE.Clock();
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
+            if (water) {
+                water.material.uniforms.u_time.value = clock.getElapsedTime();
+            }
             renderer.render(scene, camera);
         }
         animate();
