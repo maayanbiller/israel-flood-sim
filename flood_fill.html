@@ -33,6 +33,7 @@
         <div class="controls" id="controls" style="display:none;">
             <label>Sea Level: <span id="val">0</span> meters</label>
             <input type="range" id="seaLevel" min="0" max="1500" value="0" style="width: 100%;">
+            <label style="margin-top: 5px; font-size: 1rem;"><input type="checkbox" id="magmaMode"> 🔥 Magma Mode</label>
             <p style="font-size: 0.8rem; color: #888;">Only regions connected to the ocean will flood.</p>
         </div>
     </div>
@@ -40,9 +41,10 @@
     <script>
         // 1. Scene Setup
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x1a1a2e, 0.003); 
+        // Thick dark fog perfectly matches the void skirt to hide map edges and simulate an infinite horizon!
+        scene.fog = new THREE.FogExp2(0x111116, 0.015); 
         
-        const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 2000);
         camera.position.set(0, 120, 150);
         
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -51,7 +53,9 @@
         
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        controls.maxPolarAngle = Math.PI / 2 - 0.05; 
+        controls.maxPolarAngle = Math.PI / 2 - 0.01; // Allow horizon views again since the fog hides the edge!
+        controls.minDistance = 10;
+        controls.maxDistance = 300; 
         
         // 2. Load Local Data
         const textureLoader = new THREE.TextureLoader();
@@ -202,11 +206,19 @@
             
             // Our stitched image aspect ratio is 3 cols x 5 rows = 0.6
             // We use a plane of 120 width x 200 height
-            const geometry = new THREE.PlaneGeometry(120, 200, 255, 255);
+            const geometry = new THREE.PlaneGeometry(120, 200, 511, 511);
             geometry.rotateX(-Math.PI / 2);
             
             const terrain = new THREE.Mesh(geometry, terrainMaterial);
             scene.add(terrain);
+            
+            // Widen the horizon by adding a massive background skirt. Optimized to 1x1 geometry per Efficiency Reviewer!
+            const skirtGeo = new THREE.PlaneGeometry(4000, 4000, 1, 1);
+            skirtGeo.rotateX(-Math.PI / 2);
+            const skirtMat = new THREE.MeshBasicMaterial({ color: 0x111116 }); // Dark void
+            const skirt = new THREE.Mesh(skirtGeo, skirtMat);
+            skirt.position.y = -5; // Just below the lowest terrain
+            scene.add(skirt);
             
             // Water plane that conforms to the terrain but only where mask > 0
             const waterUniforms = {
@@ -214,7 +226,8 @@
                 tMask: { value: maskTexture },
                 exaggeration: { value: 0.5 },
                 seaLevel: { value: 0.0 },
-                u_time: { value: 0.0 }
+                u_time: { value: 0.0 },
+                isMagma: { value: 0.0 }
             };
             
             const waterVert = `
@@ -242,10 +255,11 @@
                 uniform sampler2D tElevation;
                 uniform float seaLevel;
                 uniform float u_time;
+                uniform float isMagma;
                 varying vec2 vUv;
                 varying float vMask;
                 
-                // Simple 2D noise for waves
+                // Simple 2D noise for waves and magma crust
                 float hash(vec2 p) {
                     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
                 }
@@ -271,41 +285,48 @@
                     // Calculate depth
                     float depth = max(0.0, seaLevel - elevation);
                     
-                    // Water color gradient based on depth (shallow = cyan, deep = dark blue)
-                    vec3 shallowColor = vec3(0.0, 0.7, 0.8);
-                    vec3 deepColor = vec3(0.0, 0.2, 0.5);
+                    // Color gradient: Cyan->Blue for water, Yellow->Red for Magma
+                    vec3 shallowColor = mix(vec3(0.0, 0.7, 0.8), vec3(1.0, 0.8, 0.0), isMagma);
+                    vec3 deepColor = mix(vec3(0.0, 0.2, 0.5), vec3(0.8, 0.1, 0.0), isMagma);
                     float depthFactor = clamp(depth / 150.0, 0.0, 1.0);
-                    vec3 waterColor = mix(shallowColor, deepColor, depthFactor);
+                    vec3 baseColor = mix(shallowColor, deepColor, depthFactor);
                     
-                    // Generate wave normals
-                    vec2 waveUv = vUv * 400.0; // Scale UV for wave size
+                    // Generate wave/lava normals
+                    vec2 waveUv = vUv * 400.0;
                     float n1 = noise(waveUv + u_time * 0.5);
                     float n2 = noise(waveUv * 2.0 - u_time * 0.7);
                     
-                    // Pseudo-normal from noise gradient
                     vec3 normal = normalize(vec3(
                         noise(waveUv + vec2(0.1, 0.0)) - noise(waveUv - vec2(0.1, 0.0)),
                         noise(waveUv + vec2(0.0, 0.1)) - noise(waveUv - vec2(0.0, 0.1)),
-                        1.5 // Flattens the normal slightly
+                        1.5 
                     ));
                     
-                    // Sun specular reflection
+                    // Sun specular reflection (Water only)
                     vec3 sunDir = normalize(vec3(1.0, 1.0, 0.8));
-                    vec3 viewDir = normalize(vec3(0.0, -1.0, 1.0)); // Approximate view dir
+                    vec3 viewDir = normalize(vec3(0.0, -1.0, 1.0)); 
                     vec3 halfVector = normalize(sunDir + viewDir);
+                    float specular = pow(max(dot(normal, halfVector), 0.0), 30.0) * (1.0 - isMagma);
                     
-                    float specular = pow(max(dot(normal, halfVector), 0.0), 30.0);
-                    
-                    // Foam near shore (depth < 15m)
+                    // Foam near shore (Water only)
                     float foam = 0.0;
-                    if (depth < 15.0) {
+                    if (depth < 15.0 && isMagma < 0.5) {
                         foam = smoothstep(0.4, 1.0, noise(waveUv * 3.0 + u_time * 1.2)) * (1.0 - depth/15.0);
                     }
                     
-                    vec3 finalColor = waterColor + vec3(specular * 0.6) + vec3(foam * 0.8);
+                    vec3 finalColor = baseColor + vec3(specular * 0.6) + vec3(foam * 0.8);
                     
-                    // Alpha blending: more transparent in shallow water
-                    float alpha = clamp(depth / 20.0, 0.5, 0.9);
+                    // Magma Crust (Magma only)
+                    if (isMagma > 0.5) {
+                        float crust = noise(waveUv * 1.5 + u_time * 0.15);
+                        // Add dark rocky crust patches
+                        finalColor = mix(finalColor, vec3(0.1, 0.05, 0.02), smoothstep(0.5, 0.8, crust));
+                        // Add emissive intense glow
+                        finalColor += vec3(0.3, 0.1, 0.0);
+                    }
+                    
+                    // Alpha blending: Magma is 100% opaque, water gets transparent in shallows
+                    float alpha = mix(clamp(depth / 20.0, 0.5, 0.9), 1.0, isMagma);
                     
                     gl_FragColor = vec4(finalColor, alpha);
                 }
@@ -322,18 +343,19 @@
             water = new THREE.Mesh(geometry, waterMaterial);
             scene.add(water);
             
-            // UI listener
+            // UI listeners
             const slider = document.getElementById('seaLevel');
             const valLabel = document.getElementById('val');
             slider.addEventListener('input', (e) => {
                 const val = parseFloat(e.target.value);
                 valLabel.innerText = val;
-                
-                // Fast JS Flood Fill
                 updateFloodMask(val);
-                
-                // Update shader
                 waterUniforms.seaLevel.value = val;
+            });
+            
+            const magmaToggle = document.getElementById('magmaMode');
+            magmaToggle.addEventListener('change', (e) => {
+                waterUniforms.isMagma.value = e.target.checked ? 1.0 : 0.0;
             });
         }
         

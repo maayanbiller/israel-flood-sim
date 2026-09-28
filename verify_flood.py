@@ -82,3 +82,17 @@ for level in test_levels:
             idx = py * width + px
             is_flooded = mask[idx] == 1
             print(f"{name:25}: {'[SOAKED]' if is_flooded else '[DRY]'}")
+
+print("\n=== BINARY SEARCH: DEAD SEA THRESHOLD ===")
+ds_px = int((lon2x(35.45, z) - base_x) * 256)
+ds_py = int((lat2y(31.50, z) - base_y) * 256)
+
+exact_threshold = -1
+print("Scanning sea levels 0m to 150m to find the breach point...")
+for level in range(0, 151):
+    mask = simulate_flood(level)
+    if mask[ds_py * width + ds_px] == 1:
+        exact_threshold = level
+        break
+
+print(f"\n[!!!] The exact sea level rise required to breach the Jezreel Valley and flood the Dead Sea is: {exact_threshold} meters.")

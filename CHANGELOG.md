@@ -1,5 +1,12 @@
 # Project Log & Changelog
 
+## 2026-09-28: Magma Mode, Infinite Horizons, and Validation
+- **Mathematical Validation:** Confirmed that the precise sea-level rise required to overtop the Jezreel Valley watershed and flood the Dead Sea basin is exactly 59 meters.
+- **Infinite Horizon & Camera:** Fixed the OrbitControls clipping issue and expanded the world using a massively optimized 1x1 polygon background skirt. Blended the high-poly terrain into the skirt using dense volumetric fog (`0x111116`) for a seamless, infinite illusion.
+- **Dynamic Water Shader:** Upgraded the flat blue flood mask to a dynamic GLSL shader using a real-time clock to render animated waves, shoreline foam, sun reflections, and depth-based coloring (cyan to deep blue).
+- **Magma Mode:** Added a "Magma Mode" UI toggle. The fragment shader dynamically switches to an emissive, opaque red/yellow gradient with dark, procedural rocky crust patches.
+- **AI Council Orchestration:** Logged the architectural debate between specialized subagents (Petty, Efficiency, Creative, Architect) into `AGENT_COUNCIL_DEBATE.md`.
+
 ## 2026-09-28: Version Control and Safety Upgrades
 - Initialized local git repository.
 - Configured `.gitignore` to keep temporary debugging files and test output images out of version control.
