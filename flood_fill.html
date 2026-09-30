@@ -9,8 +9,7 @@
         body {
             margin: 0;
             overflow: hidden;
-            /* Beautiful night sky gradient */
-            background: linear-gradient(to bottom, #0a1a3a 0%, #090a0f 100%);
+            background: #000;
             color: white;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
@@ -64,23 +63,52 @@
     <script>
         // 1. Scene Setup
         const scene = new THREE.Scene();
-        // Fog exactly matches the CSS background bottom color to create an infinite atmospheric horizon
-        scene.fog = new THREE.FogExp2(0x090a0f, 0.012); 
+        
+        // 3D Skybox for True Infinite Horizon
+        const vertexShaderSky = `
+            varying vec3 vWorldPosition;
+            void main() {
+                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                vWorldPosition = worldPosition.xyz;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+        const fragmentShaderSky = `
+            varying vec3 vWorldPosition;
+            void main() {
+                vec3 dir = normalize(vWorldPosition);
+                vec3 skyColor = vec3(0.02, 0.05, 0.12);
+                vec3 horizonColor = vec3(0.4, 0.54, 0.6);
+                float mixVal = smoothstep(-0.1, 0.4, dir.y);
+                gl_FragColor = vec4(mix(horizonColor, skyColor, mixVal), 1.0);
+            }
+        `;
+        const skyGeo = new THREE.SphereGeometry(2000, 32, 15);
+        const skyMat = new THREE.ShaderMaterial({
+            vertexShader: vertexShaderSky,
+            fragmentShader: fragmentShaderSky,
+            side: THREE.BackSide,
+            depthWrite: false
+        });
+        const sky = new THREE.Mesh(skyGeo, skyMat);
+        scene.add(sky);
+        
+        // Fog matches the horizon color
+        scene.fog = new THREE.FogExp2(0x668a99, 0.006); 
         
         const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 4000);
         camera.position.set(0, 80, 180);
         
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setClearColor(0x000000, 0); // Transparent to show CSS gradient sky!
         document.body.appendChild(renderer.domElement);
         
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        controls.maxPolarAngle = Math.PI / 2 - 0.02; 
-        controls.minDistance = 5;
-        controls.maxDistance = 400; 
-        controls.enablePan = false; // Block going underground entirely!
+        controls.maxPolarAngle = Math.PI / 2 - 0.01; 
+        controls.minDistance = 2;
+        controls.maxDistance = 500; 
+        controls.enablePan = true; // RESTORED PANNING! We will use smart collision instead.
         
         // 2. Load Local Data
         const textureLoader = new THREE.TextureLoader();
@@ -96,6 +124,7 @@
         let maskTexture = null;
         let imgW = 768; 
         let imgH = 1280; 
+        let currentSeaLevel = 0;
         
         function checkLoad() {
             loadedCount++;
@@ -185,14 +214,15 @@
             terrainUniforms = {
                 tDiffuse: { value: satTexture },
                 tElevation: { value: elevTexture },
-                exaggeration: { value: 0.5 }
+                exaggeration: { value: 0.5 },
+                cameraPos: { value: camera.position }
             };
             
-            // NEXT-GEN TERRAIN: Calculate real normals for dynamic lighting
             const vertexShader = `
                 uniform sampler2D tElevation;
                 uniform float exaggeration;
                 varying vec2 vUv;
+                varying vec3 vWorldPosition;
                 
                 void main() {
                     vUv = uv;
@@ -200,22 +230,42 @@
                     float heightMeters = (elev.r * 255.0 * 256.0 + elev.g * 255.0 + elev.b * 255.0 / 256.0) - 32768.0;
                     float scaledHeight = heightMeters * 0.005 * exaggeration;
                     vec3 newPosition = position + normal * scaledHeight;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+                    
+                    vec4 worldPosition = modelMatrix * vec4(newPosition, 1.0);
+                    vWorldPosition = worldPosition.xyz;
+                    gl_Position = projectionMatrix * viewMatrix * worldPosition;
                 }
             `;
             
+            // FRACTAL NOISE DETAILS FOR MAX ZOOM
             const fragmentShader = `
                 uniform sampler2D tDiffuse;
                 uniform sampler2D tElevation;
                 uniform float exaggeration;
+                uniform vec3 cameraPos;
                 varying vec2 vUv;
+                varying vec3 vWorldPosition;
+                
+                float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+                float noise(vec2 p) {
+                    vec2 i = floor(p); vec2 f = fract(p);
+                    f = f * f * (3.0 - 2.0 * f);
+                    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+                               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+                }
+                float fbm(vec2 p) {
+                    float f = 0.0; float w = 0.5;
+                    for (int i = 0; i < 4; i++) {
+                        f += w * noise(p); p *= 2.0; w *= 0.5;
+                    }
+                    return f;
+                }
                 
                 void main() {
                     vec4 texColor = texture2D(tDiffuse, vUv);
                     
-                    // Generate normals via finite difference for high-quality lighting
+                    // Generate Macro Normals (Lighting)
                     vec2 texel = vec2(1.0 / 768.0, 1.0 / 1280.0);
-                    
                     float hL = (texture2D(tElevation, vUv - vec2(texel.x, 0.0)).r * 255.0 * 256.0 + texture2D(tElevation, vUv - vec2(texel.x, 0.0)).g * 255.0) - 32768.0;
                     float hR = (texture2D(tElevation, vUv + vec2(texel.x, 0.0)).r * 255.0 * 256.0 + texture2D(tElevation, vUv + vec2(texel.x, 0.0)).g * 255.0) - 32768.0;
                     float hD = (texture2D(tElevation, vUv - vec2(0.0, texel.y)).r * 255.0 * 256.0 + texture2D(tElevation, vUv - vec2(0.0, texel.y)).g * 255.0) - 32768.0;
@@ -224,22 +274,35 @@
                     float zScale = 0.005 * exaggeration;
                     vec3 va = normalize(vec3(texel.x * 120.0, 0.0, (hR - hL) * zScale));
                     vec3 vb = normalize(vec3(0.0, texel.y * 200.0, (hU - hD) * zScale));
-                    vec3 normal = normalize(cross(va, vb));
+                    vec3 macroNormal = normalize(cross(va, vb));
                     
-                    // Warm evening sunlight casting deep, realistic shadows
-                    vec3 sunDir = normalize(vec3(-1.0, 0.4, 0.5));
-                    float diff = max(dot(normal, sunDir), 0.0);
+                    // GENERATE MICRO-DETAILS FOR MAXIMUM ZOOM QUALITY!
+                    float dist = length(cameraPos - vWorldPosition);
+                    float detailFade = clamp(1.0 - (dist / 100.0), 0.0, 1.0); // Fades in when close
                     
-                    // Atmospheric scattering ambient light
+                    float detailNoise = fbm(vUv * 2000.0);
+                    vec3 detailNormal = normalize(vec3(
+                        fbm(vUv * 2000.0 + vec2(0.01, 0.0)) - detailNoise,
+                        fbm(vUv * 2000.0 + vec2(0.0, 0.01)) - detailNoise,
+                        0.5
+                    ));
+                    
+                    // Blend normal
+                    vec3 finalNormal = normalize(macroNormal + detailNormal * detailFade * 1.5);
+                    
+                    // Add micro-texture color
+                    vec3 detailColor = mix(vec3(0.7), vec3(1.3), detailNoise);
+                    texColor.rgb *= mix(vec3(1.0), detailColor, detailFade * 0.4);
+                    
+                    // Sunlight
+                    vec3 sunDir = normalize(vec3(-1.0, 0.6, 0.5));
+                    float diff = max(dot(finalNormal, sunDir), 0.0);
+                    
                     vec3 ambient = vec3(0.3, 0.4, 0.6); 
                     vec3 diffuse = vec3(1.2, 1.0, 0.8) * diff * 1.5;
                     
-                    vec3 finalColor = texColor.rgb * (ambient + diffuse);
-                    
-                    // Brighten the deserts slightly
-                    finalColor *= 1.2;
-                    
-                    gl_FragColor = vec4(finalColor, 1.0);
+                    vec3 finalLighting = texColor.rgb * (ambient + diffuse);
+                    gl_FragColor = vec4(finalLighting, 1.0);
                 }
             `;
             
@@ -256,7 +319,13 @@
             const terrain = new THREE.Mesh(geometry, terrainMaterial);
             scene.add(terrain);
             
-            // Remove the dark skirt plane entirely! Let the fog and skybox handle the infinite void.
+            // INFINITE OCEAN SKIRT - A massive plane to hide floating mesh edges
+            const oceanGeo = new THREE.PlaneGeometry(100000, 100000, 1, 1);
+            oceanGeo.rotateX(-Math.PI / 2);
+            const oceanMat = new THREE.MeshBasicMaterial({ color: 0x061122 }); 
+            const oceanSkirt = new THREE.Mesh(oceanGeo, oceanMat);
+            oceanSkirt.position.y = -1.0; 
+            scene.add(oceanSkirt);
 
             const waterUniforms = {
                 tElevation: { value: elevTexture },
@@ -267,7 +336,6 @@
                 isMagma: { value: 0.0 }
             };
             
-            // PHYSICALLY ANIMATED WAVES via Vertex Displacement
             const waterVert = `
                 uniform sampler2D tElevation;
                 uniform sampler2D tMask;
@@ -277,12 +345,12 @@
                 uniform float isMagma;
                 varying vec2 vUv;
                 varying float vMask;
+                varying vec3 vWorldPosition;
                 
                 void main() {
                     vUv = uv;
                     vMask = texture2D(tMask, uv).r; 
                     
-                    // Physically animate the vertex height for rolling waves!
                     float wave = sin(uv.x * 60.0 + u_time * 2.0) * cos(uv.y * 60.0 + u_time * 1.5) * 0.3;
                     float magmaWave = sin(uv.x * 20.0 + u_time * 0.5) * 0.5;
                     float finalWave = isMagma < 0.5 ? wave : magmaWave;
@@ -291,7 +359,9 @@
                     float scaledHeight = height * 0.005 * exaggeration;
                     
                     vec3 newPosition = position + normal * scaledHeight;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+                    vec4 worldPosition = modelMatrix * vec4(newPosition, 1.0);
+                    vWorldPosition = worldPosition.xyz;
+                    gl_Position = projectionMatrix * viewMatrix * worldPosition;
                 }
             `;
             
@@ -302,20 +372,13 @@
                 uniform float isMagma;
                 varying vec2 vUv;
                 varying float vMask;
+                varying vec3 vWorldPosition;
                 
-                float hash(vec2 p) {
-                    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-                }
-                
+                float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
                 float noise(vec2 p) {
-                    vec2 i = floor(p);
-                    vec2 f = fract(p);
-                    f = f * f * (3.0 - 2.0 * f);
-                    return mix(
-                        mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), f.x),
-                        mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
-                        f.y
-                    );
+                    vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+                    return mix(mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), f.x),
+                               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
                 }
                 
                 void main() {
@@ -325,20 +388,15 @@
                     float elevation = (elevData.r * 255.0 * 256.0 + elevData.g * 255.0 + elevData.b * 255.0 / 256.0) - 32768.0;
                     float depth = max(0.0, seaLevel - elevation);
                     
-                    // WATER COLORS
                     vec3 shallowWater = vec3(0.0, 0.8, 0.9);
                     vec3 deepWater = vec3(0.0, 0.1, 0.4);
                     float depthFactor = clamp(depth / 150.0, 0.0, 1.0);
                     vec3 waterColor = mix(shallowWater, deepWater, depthFactor);
                     
-                    // MAGMA COLORS (Gorgeously overhauled)
-                    vec3 magmaEdge = vec3(1.0, 0.2, 0.0); // Deep red hot edge
-                    vec3 magmaCore = vec3(1.0, 0.9, 0.3); // Blinding yellow core
+                    vec3 magmaEdge = vec3(1.0, 0.2, 0.0); 
+                    vec3 magmaCore = vec3(1.0, 0.9, 0.3); 
                     
                     vec2 waveUv = vUv * 500.0;
-                    float n1 = noise(waveUv + u_time * 0.8);
-                    float n2 = noise(waveUv * 2.5 - u_time * 1.1);
-                    
                     vec3 normal = normalize(vec3(
                         noise(waveUv + vec2(0.1, 0.0)) - noise(waveUv - vec2(0.1, 0.0)),
                         noise(waveUv + vec2(0.0, 0.1)) - noise(waveUv - vec2(0.0, 0.1)),
@@ -346,7 +404,7 @@
                     ));
                     
                     vec3 sunDir = normalize(vec3(1.0, 1.0, 0.8));
-                    vec3 viewDir = normalize(vec3(0.0, -1.0, 1.0)); 
+                    vec3 viewDir = normalize(cameraPosition - vWorldPosition); 
                     vec3 halfVector = normalize(sunDir + viewDir);
                     
                     float specular = pow(max(dot(normal, halfVector), 0.0), 40.0) * (1.0 - isMagma);
@@ -359,22 +417,15 @@
                     vec3 finalColor = waterColor + vec3(specular * 0.8) + vec3(foam);
                     
                     if (isMagma > 0.5) {
-                        // Smoothly animated lava swirls
                         float lavaFlow = noise(vUv * 80.0 + u_time * 0.3);
                         float crustNoise = noise(vUv * 300.0 - u_time * 0.1);
-                        
-                        // Core vs Edge heating
                         vec3 magmaColor = mix(magmaEdge, magmaCore, smoothstep(0.2, 0.8, lavaFlow));
-                        
-                        // Solidified dark rock crust
                         float crustThreshold = smoothstep(0.4, 0.7, crustNoise);
                         vec3 crustColor = vec3(0.05, 0.02, 0.01);
-                        
                         finalColor = mix(magmaColor * 1.5, crustColor, crustThreshold);
                     }
                     
                     float alpha = mix(clamp(depth / 15.0, 0.6, 0.95), 1.0, isMagma);
-                    
                     gl_FragColor = vec4(finalColor, alpha);
                 }
             `;
@@ -395,6 +446,7 @@
             slider.addEventListener('input', (e) => {
                 const val = parseFloat(e.target.value);
                 valLabel.innerText = val;
+                currentSeaLevel = val;
                 updateFloodMask(val);
                 waterUniforms.seaLevel.value = val;
             });
@@ -405,10 +457,46 @@
             });
         }
         
+        // SMART CAMERA COLLISION DETECTION
+        function getTerrainHeight(x, z) {
+            if (!elevationData) return -100;
+            
+            // Map X from (-60 to 60) to U (0 to 1)
+            let u = (x + 60.0) / 120.0;
+            // Map Z from (-100 to 100) to V (0 to 1)
+            let v = (z + 100.0) / 200.0;
+            
+            if (u < 0 || u >= 1 || v < 0 || v >= 1) {
+                // If off the map, clamp to sea level or 0
+                return Math.max(0, currentSeaLevel * 0.005 * 0.5);
+            }
+            
+            let px = Math.floor(u * imgW);
+            let py = Math.floor(v * imgH); 
+            px = Math.max(0, Math.min(imgW - 1, px));
+            py = Math.max(0, Math.min(imgH - 1, py));
+            
+            let heightMeters = elevationData[py * imgW + px];
+            return heightMeters * 0.005 * 0.5; // exaggeration factor
+        }
+        
         const clock = new THREE.Clock();
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
+            
+            // Apply Camera Collision
+            if (elevationData) {
+                let th = getTerrainHeight(camera.position.x, camera.position.z);
+                let minCamY = th + 1.5; // Stay 1.5 units above ground
+                if (camera.position.y < minCamY) {
+                    camera.position.y = minCamY;
+                }
+            }
+            
+            if (terrainUniforms) {
+                terrainUniforms.cameraPos.value.copy(camera.position);
+            }
             if (water) {
                 water.material.uniforms.u_time.value = clock.getElapsedTime();
             }
