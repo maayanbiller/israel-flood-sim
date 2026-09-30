@@ -252,11 +252,10 @@
                     
                     vec3 finalLighting = texColor.rgb * (ambient + diffuse) * 1.1;
                     
-                    // INFINITE HORIZON: Smooth rounded rectangle vignette fade
-                    vec2 worldDist = (vUv - 0.5) * vec2(360.0, 600.0);
-                    vec2 d = abs(worldDist) - vec2(130.0, 240.0); // Start fade earlier
-                    float edgeDist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
-                    float edgeFade = 1.0 - smoothstep(0.0, 40.0, edgeDist);
+                    // INFINITE HORIZON: Bulletproof elliptical fade
+                    float distFromCenter = length((vUv - 0.5) * 2.0); 
+                    // Fade hits 0 opacity at 0.95, meaning the outer 5% of the mesh is mathematically pure sky
+                    float edgeFade = 1.0 - smoothstep(0.7, 0.95, distFromCenter);
                     
                     vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0);
                     finalLighting = mix(perfectSky, finalLighting, edgeFade);
@@ -390,11 +389,10 @@
                         finalColor = mix(magmaColor * 1.5, crustColor, crustThreshold);
                     }
                     
-                    // INFINITE HORIZON: Smooth rounded rectangle vignette fade
-                    vec2 worldDist = (vUv - 0.5) * vec2(360.0, 600.0);
-                    vec2 d = abs(worldDist) - vec2(130.0, 240.0); 
-                    float edgeDist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
-                    float edgeFade = 1.0 - smoothstep(0.0, 40.0, edgeDist);
+                    // INFINITE HORIZON: Bulletproof elliptical fade
+                    float distFromCenter = length((vUv - 0.5) * 2.0);
+                    // Fade hits 0 opacity at 0.95, meaning the outer 5% of the mesh is mathematically pure sky
+                    float edgeFade = 1.0 - smoothstep(0.7, 0.95, distFromCenter);
                     
                     vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0); 
                     finalColor = mix(perfectSky, finalColor, edgeFade);
