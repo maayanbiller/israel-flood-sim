@@ -47,14 +47,12 @@
             }
         `;
         const fragmentShaderSky = `
-            uniform vec3 cameraPosition;
             varying vec3 vWorldPosition;
             void main() {
-                vec3 dir = normalize(vWorldPosition - cameraPosition);
                 vec3 skyColor = vec3(0.02, 0.05, 0.12);
-                vec3 horizonColor = vec3(0.4, 0.54, 0.6);
-                // Perfectly aligns the skybox gradient with the eye-level horizon
-                float mixVal = smoothstep(-0.02, 0.25, dir.y);
+                vec3 horizonColor = vec3(0.4, 0.54, 0.6); 
+                // Smoothly fade from horizon to sky based on absolute height
+                float mixVal = smoothstep(-50.0, 400.0, vWorldPosition.y);
                 gl_FragColor = vec4(mix(horizonColor, skyColor, mixVal), 1.0);
             }
         `;
@@ -65,6 +63,7 @@
         
         // Dense fog exactly matching horizon to hide mesh boundaries
         scene.fog = new THREE.Fog(0x668a99, 100, 350); 
+        scene.background = new THREE.Color(0x668a99); // Fallback background matches fog perfectly
         
         const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 4000);
         camera.position.set(0, 80, 180);
@@ -74,18 +73,15 @@
         document.body.appendChild(renderer.domElement);
         
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = false; // CRITICAL: Disabled damping. Damping fights with manual Y-clamping, causing violent screen jitter.
+        controls.enableDamping = false; 
         controls.maxPolarAngle = Math.PI / 2 - 0.01; 
         controls.minDistance = 2;
-        // CRITICAL FIX: Limit max distance so camera never swings outside the fog radius!
         controls.maxDistance = 150; 
         controls.enablePan = true; 
         
         const textureLoader = new THREE.TextureLoader();
-        // Use the massive extended textures for the entire unified mesh
         const satTexture = textureLoader.load('data/sat_extended.jpg', () => checkLoad());
         const elevTexture = textureLoader.load('data/elev_extended.png', () => checkLoad());
-        // Load the small inner elevation map purely for the fast JS BFS algorithm
         const elevInner = textureLoader.load('data/elev.png', () => checkLoad());
         
         satTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -181,8 +177,7 @@
             terrainUniforms = {
                 tDiffuse: { value: satTexture },
                 tElevation: { value: elevTexture },
-                exaggeration: { value: 0.5 },
-                cameraPos: { value: camera.position }
+                exaggeration: { value: 0.5 }
             };
             
             const vertexShader = `
@@ -208,7 +203,6 @@
                 uniform sampler2D tDiffuse;
                 uniform sampler2D tElevation;
                 uniform float exaggeration;
-                uniform vec3 cameraPos;
                 varying vec2 vUv;
                 varying vec3 vWorldPosition;
                 
@@ -239,9 +233,6 @@
                     vec3 vb = normalize(vec3(0.0, texel.y * 600.0, (hU - hD) * zScale));
                     vec3 macroNormal = normalize(cross(va, vb));
                     
-                    float dist = length(cameraPos - vWorldPosition);
-                    float detailFade = clamp(1.0 - (dist / 100.0), 0.0, 1.0);
-                    
                     float detailNoise = fbm(vUv * 6000.0);
                     vec3 detailNormal = normalize(vec3(
                         fbm(vUv * 6000.0 + vec2(0.01, 0.0)) - detailNoise,
@@ -249,9 +240,9 @@
                         0.5
                     ));
                     
-                    vec3 finalNormal = normalize(macroNormal + detailNormal * detailFade * 0.6);
+                    vec3 finalNormal = normalize(macroNormal + detailNormal * 0.4);
                     vec3 detailColor = mix(vec3(0.85), vec3(1.15), detailNoise);
-                    texColor.rgb *= mix(vec3(1.0), detailColor, detailFade * 0.3);
+                    texColor.rgb *= mix(vec3(1.0), detailColor, 0.3);
                     
                     vec3 sunDir = normalize(vec3(-0.5, 1.0, 0.3));
                     float diff = max(dot(finalNormal, sunDir), 0.0);
@@ -266,19 +257,13 @@
                     float edgeY = min(vUv.y, 1.0 - vUv.y);
                     float edgeFade = smoothstep(0.0, 0.1, min(edgeX, edgeY));
                     
-                    vec3 viewDir = normalize(vWorldPosition - cameraPos);
-                    vec3 skyColor = vec3(0.02, 0.05, 0.12);
-                    vec3 horizonColor = vec3(0.4, 0.54, 0.6);
-                    float skyMix = smoothstep(-0.02, 0.25, viewDir.y);
-                    vec3 perfectSky = mix(horizonColor, skyColor, skyMix);
-                    
+                    vec3 perfectSky = vec3(0.4, 0.54, 0.6); // Hardcoded to match horizon color precisely
                     finalLighting = mix(perfectSky, finalLighting, edgeFade);
                     
                     gl_FragColor = vec4(finalLighting, 1.0);
                 }
             `;
             
-            // Unified massive geometry replacing both inner and outer meshes
             const geometry = new THREE.PlaneGeometry(360, 600, 767, 767);
             geometry.rotateX(-Math.PI / 2);
             
@@ -381,6 +366,7 @@
                         1.2 
                     ));
                     
+                    // Simple lighting for water
                     vec3 sunDir = normalize(vec3(1.0, 1.0, 0.8));
                     vec3 viewDir = normalize(cameraPosition - vWorldPosition); 
                     vec3 halfVector = normalize(sunDir + viewDir);
@@ -408,12 +394,7 @@
                     float edgeY = min(vUv.y, 1.0 - vUv.y);
                     float edgeFade = smoothstep(0.0, 0.1, min(edgeX, edgeY));
                     
-                    vec3 skyDir = normalize(vWorldPosition - cameraPosition);
-                    vec3 skyColor = vec3(0.02, 0.05, 0.12);
-                    vec3 horizonColor = vec3(0.4, 0.54, 0.6);
-                    float skyMix = smoothstep(-0.02, 0.25, skyDir.y);
-                    vec3 perfectSky = mix(horizonColor, skyColor, skyMix);
-                    
+                    vec3 perfectSky = vec3(0.4, 0.54, 0.6); // Hardcoded to match horizon perfectly
                     finalColor = mix(perfectSky, finalColor, edgeFade);
                     
                     float alpha = mix(clamp(depth / 15.0, 0.6, 0.95), 1.0, isMagma);
@@ -475,9 +456,6 @@
                 }
             }
             
-            if (terrainUniforms) {
-                terrainUniforms.cameraPos.value.copy(camera.position);
-            }
             if (water) {
                 water.material.uniforms.u_time.value = clock.getElapsedTime();
             }
