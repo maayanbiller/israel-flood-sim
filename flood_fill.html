@@ -287,21 +287,26 @@
                         0.5
                     ));
                     
-                    // Blend normal
-                    vec3 finalNormal = normalize(macroNormal + detailNormal * detailFade * 1.5);
+                    // Blend normal - toned down the micro-detail intensity
+                    vec3 finalNormal = normalize(macroNormal + detailNormal * detailFade * 0.6);
                     
-                    // Add micro-texture color
-                    vec3 detailColor = mix(vec3(0.7), vec3(1.3), detailNoise);
-                    texColor.rgb *= mix(vec3(1.0), detailColor, detailFade * 0.4);
+                    // Add micro-texture color - subtle
+                    vec3 detailColor = mix(vec3(0.85), vec3(1.15), detailNoise);
+                    texColor.rgb *= mix(vec3(1.0), detailColor, detailFade * 0.3);
                     
-                    // Sunlight
-                    vec3 sunDir = normalize(vec3(-1.0, 0.6, 0.5));
+                    // Sunlight - raised higher in the sky for softer, shorter shadows
+                    vec3 sunDir = normalize(vec3(-0.5, 1.0, 0.3));
                     float diff = max(dot(finalNormal, sunDir), 0.0);
                     
-                    vec3 ambient = vec3(0.3, 0.4, 0.6); 
-                    vec3 diffuse = vec3(1.2, 1.0, 0.8) * diff * 1.5;
+                    // Softened lighting: higher ambient light, softer diffuse light
+                    vec3 ambient = vec3(0.65, 0.65, 0.7); 
+                    vec3 diffuse = vec3(0.5, 0.45, 0.4) * diff;
                     
                     vec3 finalLighting = texColor.rgb * (ambient + diffuse);
+                    
+                    // Slight brightness bump to compensate for softer contrast
+                    finalLighting *= 1.1;
+                    
                     gl_FragColor = vec4(finalLighting, 1.0);
                 }
             `;
