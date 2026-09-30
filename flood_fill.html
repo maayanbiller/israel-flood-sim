@@ -47,12 +47,14 @@
             }
         `;
         const fragmentShaderSky = `
+            uniform vec3 cameraPosition;
             varying vec3 vWorldPosition;
             void main() {
-                vec3 dir = normalize(vWorldPosition);
+                vec3 dir = normalize(vWorldPosition - cameraPosition);
                 vec3 skyColor = vec3(0.02, 0.05, 0.12);
                 vec3 horizonColor = vec3(0.4, 0.54, 0.6);
-                float mixVal = smoothstep(-0.1, 0.4, dir.y);
+                // Perfectly aligns the skybox gradient with the eye-level horizon
+                float mixVal = smoothstep(-0.02, 0.25, dir.y);
                 gl_FragColor = vec4(mix(horizonColor, skyColor, mixVal), 1.0);
             }
         `;
@@ -62,7 +64,7 @@
         scene.add(sky);
         
         // Dense fog exactly matching horizon to hide mesh boundaries
-        scene.fog = new THREE.Fog(0x668a99, 50, 200); 
+        scene.fog = new THREE.Fog(0x668a99, 100, 350); 
         
         const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 4000);
         camera.position.set(0, 80, 180);
@@ -76,7 +78,7 @@
         controls.maxPolarAngle = Math.PI / 2 - 0.01; 
         controls.minDistance = 2;
         // CRITICAL FIX: Limit max distance so camera never swings outside the fog radius!
-        controls.maxDistance = 140; 
+        controls.maxDistance = 150; 
         controls.enablePan = true; 
         
         const textureLoader = new THREE.TextureLoader();
@@ -258,6 +260,20 @@
                     vec3 diffuse = vec3(0.5, 0.45, 0.4) * diff;
                     
                     vec3 finalLighting = texColor.rgb * (ambient + diffuse) * 1.1;
+                    
+                    // INFINITE HORIZON: Fade the outer 10% of the mesh directly into the physical skybox color
+                    float edgeX = min(vUv.x, 1.0 - vUv.x);
+                    float edgeY = min(vUv.y, 1.0 - vUv.y);
+                    float edgeFade = smoothstep(0.0, 0.1, min(edgeX, edgeY));
+                    
+                    vec3 viewDir = normalize(vWorldPosition - cameraPos);
+                    vec3 skyColor = vec3(0.02, 0.05, 0.12);
+                    vec3 horizonColor = vec3(0.4, 0.54, 0.6);
+                    float skyMix = smoothstep(-0.02, 0.25, viewDir.y);
+                    vec3 perfectSky = mix(horizonColor, skyColor, skyMix);
+                    
+                    finalLighting = mix(perfectSky, finalLighting, edgeFade);
+                    
                     gl_FragColor = vec4(finalLighting, 1.0);
                 }
             `;
@@ -386,6 +402,19 @@
                         vec3 crustColor = vec3(0.05, 0.02, 0.01);
                         finalColor = mix(magmaColor * 1.5, crustColor, crustThreshold);
                     }
+                    
+                    // INFINITE HORIZON: Fade the outer 10% of the mesh directly into the physical skybox color
+                    float edgeX = min(vUv.x, 1.0 - vUv.x);
+                    float edgeY = min(vUv.y, 1.0 - vUv.y);
+                    float edgeFade = smoothstep(0.0, 0.1, min(edgeX, edgeY));
+                    
+                    vec3 skyDir = normalize(vWorldPosition - cameraPosition);
+                    vec3 skyColor = vec3(0.02, 0.05, 0.12);
+                    vec3 horizonColor = vec3(0.4, 0.54, 0.6);
+                    float skyMix = smoothstep(-0.02, 0.25, skyDir.y);
+                    vec3 perfectSky = mix(horizonColor, skyColor, skyMix);
+                    
+                    finalColor = mix(perfectSky, finalColor, edgeFade);
                     
                     float alpha = mix(clamp(depth / 15.0, 0.6, 0.95), 1.0, isMagma);
                     gl_FragColor = vec4(finalColor, alpha);
