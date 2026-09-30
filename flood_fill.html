@@ -62,7 +62,7 @@
         scene.add(sky);
         
         // Dense fog exactly matching horizon to hide mesh boundaries
-        scene.fog = new THREE.Fog(0x668a99, 100, 350); 
+        scene.fog = new THREE.Fog(0x668a99, 80, 250); 
         scene.background = new THREE.Color(0x668a99); // Fallback background matches fog perfectly
         
         const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 4000);
@@ -252,10 +252,11 @@
                     
                     vec3 finalLighting = texColor.rgb * (ambient + diffuse) * 1.1;
                     
-                    // INFINITE HORIZON: Fade the outer 10% of the mesh directly into the physical skybox color
-                    float edgeX = min(vUv.x, 1.0 - vUv.x);
-                    float edgeY = min(vUv.y, 1.0 - vUv.y);
-                    float edgeFade = smoothstep(0.0, 0.1, min(edgeX, edgeY));
+                    // INFINITE HORIZON: Smooth rounded rectangle vignette fade
+                    vec2 worldDist = (vUv - 0.5) * vec2(360.0, 600.0);
+                    vec2 d = abs(worldDist) - vec2(130.0, 240.0); // Start fade earlier
+                    float edgeDist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+                    float edgeFade = 1.0 - smoothstep(0.0, 60.0, edgeDist);
                     
                     vec3 perfectSky = vec3(0.4, 0.54, 0.6); // Hardcoded to match horizon color precisely
                     finalLighting = mix(perfectSky, finalLighting, edgeFade);
@@ -307,7 +308,7 @@
                         // In the outer regions, simply flood anything below sea level
                         vec4 elev = texture2D(tElevation, uv);
                         float heightMeters = (elev.r * 255.0 * 256.0 + elev.g * 255.0 + elev.b * 255.0 / 256.0) - 32768.0;
-                        if (heightMeters <= seaLevel) {
+                        if (heightMeters <= seaLevel && heightMeters > -20000.0) {
                             isWater = 1.0;
                         }
                     }
@@ -389,10 +390,11 @@
                         finalColor = mix(magmaColor * 1.5, crustColor, crustThreshold);
                     }
                     
-                    // INFINITE HORIZON: Fade the outer 10% of the mesh directly into the physical skybox color
-                    float edgeX = min(vUv.x, 1.0 - vUv.x);
-                    float edgeY = min(vUv.y, 1.0 - vUv.y);
-                    float edgeFade = smoothstep(0.0, 0.1, min(edgeX, edgeY));
+                    // INFINITE HORIZON: Smooth rounded rectangle vignette fade
+                    vec2 worldDist = (vUv - 0.5) * vec2(360.0, 600.0);
+                    vec2 d = abs(worldDist) - vec2(130.0, 240.0); 
+                    float edgeDist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+                    float edgeFade = 1.0 - smoothstep(0.0, 60.0, edgeDist);
                     
                     vec3 perfectSky = vec3(0.4, 0.54, 0.6); // Hardcoded to match horizon perfectly
                     finalColor = mix(perfectSky, finalColor, edgeFade);

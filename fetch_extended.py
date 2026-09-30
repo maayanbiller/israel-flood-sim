@@ -15,12 +15,18 @@ os.makedirs("temp_tiles", exist_ok=True)
 def fetch_tile(task):
     url, filename, is_elev = task
     if not os.path.exists(filename):
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=5) as response, open(filename, 'wb') as out_file:
-                out_file.write(response.read())
-        except Exception as e:
-            # print(f"Failed to fetch {url}: {e}")
+        success = False
+        for attempt in range(5):
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=10) as response, open(filename, 'wb') as out_file:
+                    out_file.write(response.read())
+                success = True
+                break
+            except Exception as e:
+                import time
+                time.sleep(1)
+        if not success:
             img = Image.new('RGB', (256, 256), color=(0,0,0) if is_elev else (0,0,50))
             img.save(filename)
     return filename
