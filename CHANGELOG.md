@@ -29,3 +29,8 @@
 - Settled on a pure vanilla HTML/WebGL stack using Three.js.
 - Fetched and stitched custom Mapzen terrain elevation data (`elev.png`) and ArcGIS satellite imagery (`sat.jpg`) into a seamless 3x5 tile grid covering the entire region.
 - Wrote a custom GLSL vertex and fragment shader, coupled with a Breadth-First Search (BFS) flood-fill algorithm in JavaScript, to accurately simulate water levels rising across realistic topography based on connected terrain.
+
+### Refactoring & Bug Fixes (Motion Update)
+- Unified the 3D geometry engine: Combined the inner and outer maps into a single massive seamless 9-Megapixel plane. The BFS flood map is mapped strictly to the central UVs via the fragment shader, eliminating all Z-fighting and the "visible blue square" seam.
+- Fixed violent camera jitter during ground collisions by disabling OrbitControls damping and mapping the collision logic to the unified UV coordinate space.
+- Implemented strict OrbitControls Target clamping bounds to prevent the user from panning far enough to expose the edges of the mesh beyond the fog.
