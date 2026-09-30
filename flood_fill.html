@@ -93,8 +93,8 @@
         const sky = new THREE.Mesh(skyGeo, skyMat);
         scene.add(sky);
         
-        // Fog matches the horizon color
-        scene.fog = new THREE.FogExp2(0x668a99, 0.006); 
+        // Fog linearly fades starting 150 units out, keeping Israel perfectly clear
+        scene.fog = new THREE.Fog(0x668a99, 150, 400); 
         
         const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 4000);
         camera.position.set(0, 80, 180);
@@ -108,15 +108,20 @@
         controls.maxPolarAngle = Math.PI / 2 - 0.01; 
         controls.minDistance = 2;
         controls.maxDistance = 500; 
-        controls.enablePan = true; // RESTORED PANNING! We will use smart collision instead.
+        controls.enablePan = true; 
         
         // 2. Load Local Data
         const textureLoader = new THREE.TextureLoader();
         const satTexture = textureLoader.load('data/sat.jpg', () => checkLoad());
         const elevTexture = textureLoader.load('data/elev.png', () => checkLoad());
         
+        const satOuter = textureLoader.load('data/sat_extended.jpg', () => checkLoad());
+        const elevOuter = textureLoader.load('data/elev_extended.png', () => checkLoad());
+        
         satTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
         elevTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        satOuter.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        elevOuter.anisotropy = renderer.capabilities.getMaxAnisotropy();
         
         let loadedCount = 0;
         let elevationData = null; 
@@ -128,7 +133,7 @@
         
         function checkLoad() {
             loadedCount++;
-            if (loadedCount === 2) initTerrain();
+            if (loadedCount === 4) initTerrain();
         }
         
         function initTerrain() {
@@ -324,6 +329,29 @@
             const terrain = new THREE.Mesh(geometry, terrainMaterial);
             scene.add(terrain);
             
+            // Outer Terrain (3x scale, lower resolution grid, uses extended textures)
+            const outerUniforms = {
+                tDiffuse: { value: satOuter },
+                tElevation: { value: elevOuter },
+                exaggeration: { value: 0.5 },
+                cameraPos: { value: camera.position }
+            };
+            
+            const outerMaterial = new THREE.ShaderMaterial({
+                uniforms: outerUniforms,
+                vertexShader: vertexShader,
+                fragmentShader: fragmentShader,
+                side: THREE.DoubleSide,
+                polygonOffset: true,
+                polygonOffsetFactor: 1,
+                polygonOffsetUnits: 1
+            });
+            
+            const outerGeometry = new THREE.PlaneGeometry(360, 600, 255, 255);
+            outerGeometry.rotateX(-Math.PI / 2);
+            const outerTerrain = new THREE.Mesh(outerGeometry, outerMaterial);
+            scene.add(outerTerrain);
+            
             // INFINITE OCEAN SKIRT - A massive plane to hide floating mesh edges
             const oceanGeo = new THREE.PlaneGeometry(100000, 100000, 1, 1);
             oceanGeo.rotateX(-Math.PI / 2);
@@ -462,27 +490,27 @@
             });
         }
         
-        // SMART CAMERA COLLISION DETECTION
+        // SMART CAMERA COLLISION DETECTION (Covers both inner and outer boundaries seamlessly)
         function getTerrainHeight(x, z) {
             if (!elevationData) return -100;
             
-            // Map X from (-60 to 60) to U (0 to 1)
-            let u = (x + 60.0) / 120.0;
-            // Map Z from (-100 to 100) to V (0 to 1)
-            let v = (z + 100.0) / 200.0;
-            
-            if (u < 0 || u >= 1 || v < 0 || v >= 1) {
-                // If off the map, clamp to sea level or 0
-                return Math.max(0, currentSeaLevel * 0.005 * 0.5);
+            // First check if inside inner map (120x200)
+            if (x >= -60 && x <= 60 && z >= -100 && z <= 100) {
+                let u = (x + 60.0) / 120.0;
+                let v = (z + 100.0) / 200.0;
+                let px = Math.floor(u * imgW);
+                let py = Math.floor(v * imgH); 
+                px = Math.max(0, Math.min(imgW - 1, px));
+                py = Math.max(0, Math.min(imgH - 1, py));
+                return elevationData[py * imgW + px] * 0.005 * 0.5;
             }
             
-            let px = Math.floor(u * imgW);
-            let py = Math.floor(v * imgH); 
-            px = Math.max(0, Math.min(imgW - 1, px));
-            py = Math.max(0, Math.min(imgH - 1, py));
-            
-            let heightMeters = elevationData[py * imgW + px];
-            return heightMeters * 0.005 * 0.5; // exaggeration factor
+            // Otherwise, we must be in the outer map (360x600).
+            // Since we don't have the outer elevation data loaded into JS yet, 
+            // and we don't want to load a massive 9MB Float32 array into RAM just for camera collision,
+            // we will approximate outer height to 0 (sea level) + a smooth buffer,
+            // or simply clamp the camera to a safe height out there since it's mostly fogged anyway.
+            return Math.max(0, currentSeaLevel * 0.005 * 0.5) + 5.0;
         }
         
         const clock = new THREE.Clock();
