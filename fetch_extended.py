@@ -14,7 +14,7 @@ os.makedirs("temp_tiles", exist_ok=True)
 
 def fetch_tile(task):
     url, filename, is_elev = task
-    if not os.path.exists(filename):
+    if not os.path.exists(filename) or os.path.getsize(filename) == 0:
         success = False
         for attempt in range(5):
             try:
