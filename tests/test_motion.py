@@ -20,7 +20,7 @@ async def main():
         page = await context.new_page()
 
         print("Navigating to simulation...")
-        await page.goto("http://localhost:8080/flood_fill.html", wait_until="networkidle")
+        await page.goto("http://localhost:8080/index.html", wait_until="networkidle")
         
         try:
             await page.wait_for_selector("#controls", state="visible", timeout=15000)
