@@ -142,7 +142,9 @@ function buildMeshes() {
         tDiffuse: { value: satTexture },
         tElevation: { value: elevTexture },
         exaggeration: { value: 0.5 },
-        u_time: { value: 0.0 }
+        u_time: { value: 0.0 },
+        fadeStart: { value: 0.2 },
+        fadeEnd: { value: 0.95 }
     };
     
     const vertexShader = `
@@ -169,6 +171,8 @@ function buildMeshes() {
         uniform sampler2D tElevation;
         uniform float exaggeration;
         uniform float u_time;
+        uniform float fadeStart;
+        uniform float fadeEnd;
         varying vec2 vUv;
         varying vec3 vWorldPosition;
         
@@ -241,8 +245,8 @@ function buildMeshes() {
             
             // INFINITE HORIZON: Bulletproof elliptical fade
             float distFromCenter = length((vUv - 0.5) * 2.0); 
-            // Fade starts at 0.2 for an extremely soft, slow atmospheric vignette
-            float edgeFade = 1.0 - smoothstep(0.2, 0.95, distFromCenter);
+            // Fade starts at dynamic tuner values
+            float edgeFade = 1.0 - smoothstep(fadeStart, fadeEnd, distFromCenter);
             
             vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0);
             finalLighting = mix(perfectSky, finalLighting, edgeFade);
@@ -265,7 +269,9 @@ function buildMeshes() {
         exaggeration: { value: 0.5 },
         seaLevel: { value: 0.0 },
         u_time: { value: 0.0 },
-        isMagma: { value: 0.0 }
+        isMagma: { value: 0.0 },
+        fadeStart: { value: 0.2 },
+        fadeEnd: { value: 0.95 }
     };
     
     const waterVert = `
@@ -315,6 +321,8 @@ function buildMeshes() {
         uniform float seaLevel;
         uniform float u_time;
         uniform float isMagma;
+        uniform float fadeStart;
+        uniform float fadeEnd;
         varying vec2 vUv;
         varying float vIsWater;
         varying vec3 vWorldPosition;
@@ -371,7 +379,7 @@ function buildMeshes() {
             }
             
             float distFromCenter = length((vUv - 0.5) * 2.0);
-            float edgeFade = 1.0 - smoothstep(0.2, 0.95, distFromCenter);
+            float edgeFade = 1.0 - smoothstep(fadeStart, fadeEnd, distFromCenter);
             
             vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0); 
             finalColor = mix(perfectSky, finalColor, edgeFade);
@@ -400,6 +408,37 @@ function buildMeshes() {
     document.getElementById('magmaMode').addEventListener('change', (e) => {
         waterUniforms.isMagma.value = e.target.checked ? 1.0 : 0.0;
     });
+    
+    // --- FOG TUNER LOGIC ---
+    const fadeStartSlider = document.getElementById('fadeStartSlider');
+    const fadeEndSlider = document.getElementById('fadeEndSlider');
+    const lblStart = document.getElementById('lblStart');
+    const lblEnd = document.getElementById('lblEnd');
+    
+    if (fadeStartSlider && fadeEndSlider) {
+        fadeStartSlider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            lblStart.innerText = val.toFixed(2);
+            terrainUniforms.fadeStart.value = val;
+            waterUniforms.fadeStart.value = val;
+        });
+        
+        fadeEndSlider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            lblEnd.innerText = val.toFixed(2);
+            terrainUniforms.fadeEnd.value = val;
+            waterUniforms.fadeEnd.value = val;
+        });
+        
+        document.getElementById('copyFogBtn').addEventListener('click', () => {
+            const text = \`fadeStart: \${fadeStartSlider.value}, fadeEnd: \${fadeEndSlider.value}\`;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = document.getElementById('copyFogBtn');
+                btn.innerText = 'Copied!';
+                setTimeout(() => btn.innerText = 'Copy Settings', 2000);
+            });
+        });
+    }
 }
 
 const clock = new THREE.Clock();

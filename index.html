@@ -20,6 +20,18 @@
         </div>
     </div>
     
+    <div id="fogDebug" style="position: absolute; bottom: 20px; left: 20px; z-index: 10; background: rgba(15, 12, 41, 0.85); padding: 20px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.5); width: 320px;">
+        <h3 style="margin: 0 0 10px 0; font-weight: 400; font-size: 1.1rem;">Fog Tuner</h3>
+        
+        <label style="font-size: 0.9rem; color: #ccc;">Fade Start: <span id="lblStart">0.20</span></label><br>
+        <input type="range" id="fadeStartSlider" min="0.0" max="1.0" step="0.01" value="0.2" style="width: 100%; margin: 5px 0 10px 0;"><br>
+        
+        <label style="font-size: 0.9rem; color: #ccc;">Fade End: <span id="lblEnd">0.95</span></label><br>
+        <input type="range" id="fadeEndSlider" min="0.0" max="1.5" step="0.01" value="0.95" style="width: 100%; margin: 5px 0 15px 0;"><br>
+        
+        <button id="copyFogBtn" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-family: inherit;">Copy Settings</button>
+    </div>
+    
     <script src="js/app.js"></script>
 </body>
 </html>
