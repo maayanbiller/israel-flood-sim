@@ -23,7 +23,7 @@ async def main():
         await page.goto("http://localhost:8080/index.html", wait_until="networkidle")
         
         try:
-            await page.wait_for_selector("#controls", state="visible", timeout=15000)
+            await page.wait_for_selector("#ui", state="visible", timeout=15000)
         except:
             print("Timeout")
             return

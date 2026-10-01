@@ -1,141 +1,202 @@
-const scene = new THREE.Scene();
-
-// 3D Skybox
-const vertexShaderSky = `
-    varying vec3 vWorldPosition;
-    void main() {
-        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-        vWorldPosition = worldPosition.xyz;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-`;
-const fragmentShaderSky = `
-    varying vec3 vWorldPosition;
-    void main() {
-        vec3 skyColor = vec3(5.0/255.0, 13.0/255.0, 31.0/255.0);
-        vec3 horizonColor = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0); 
-        float mixVal = smoothstep(400.0, 1000.0, vWorldPosition.y);
-        gl_FragColor = vec4(mix(horizonColor, skyColor, mixVal), 1.0);
-    }
-`;
-const sky = new THREE.Mesh(new THREE.SphereGeometry(2000, 32, 15), new THREE.ShaderMaterial({
-    vertexShader: vertexShaderSky, fragmentShader: fragmentShaderSky, side: THREE.BackSide, depthWrite: false
-}));
-scene.add(sky);
-
-// Dense fog exactly matching horizon to hide mesh boundaries
-scene.fog = new THREE.Fog(0x668a99, 80, 250); 
-scene.background = new THREE.Color(0x668a99);
-
-const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 4000);
-camera.position.set(0, 80, 180);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
-
-const controls = new THREE.OrbitControls(camera, renderer.domElement);
-controls.enableDamping = false; 
-controls.maxPolarAngle = Math.PI / 2 - 0.01; 
-controls.minDistance = 2;
-controls.maxDistance = 150; 
-controls.enablePan = true; 
-
-const textureLoader = new THREE.TextureLoader();
-const satTexture = textureLoader.load('data/sat_extended.jpg', () => checkLoad());
-const elevTexture = textureLoader.load('data/elev_extended.png', () => checkLoad());
-const elevInner = textureLoader.load('data/elev.png', () => checkLoad());
-
-satTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-elevTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-
-let loadedCount = 0;
-let elevationData = null; 
-let maskData = null; 
-let maskTexture = null;
-let imgW = 768; 
-let imgH = 1280; 
+let scene, camera, renderer, controls;
+let terrain, water;
+let elevTexture, satTexture, maskTexture;
+let elevationData = null;
+let imgW = 2304, imgH = 3840;
 let currentSeaLevel = 0;
-let terrain = null;
-let water = null;
+let cinematicCam = true;
 
-function checkLoad() {
-    loadedCount++;
-    if (loadedCount === 3) initTerrain();
+const skyColors = {
+    dawn: new THREE.Color(0xff8c42),
+    noon: new THREE.Color(0x668a99),
+    dusk: new THREE.Color(0xcc6655),
+    night: new THREE.Color(0x0a0c10)
+};
+
+let terrainUniforms, waterUniforms;
+
+function init() {
+    scene = new THREE.Scene();
+    scene.background = skyColors.noon;
+    scene.fog = new THREE.Fog(skyColors.noon, 50, 450);
+
+    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 80, 120);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI / 2 - 0.05;
+    controls.minDistance = 2;
+    controls.maxDistance = 250;
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(0.5, 1.0, 0.3);
+    scene.add(dirLight);
+
+    loadTextures();
 }
 
-function initTerrain() {
-    const img = elevInner.image;
-    imgW = img.width;
-    imgH = img.height;
-    
-    const canvas = document.createElement('canvas');
-    canvas.width = imgW;
-    canvas.height = imgH;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
-    const imgData = ctx.getImageData(0, 0, imgW, imgH).data;
-    
-    elevationData = new Float32Array(imgW * imgH);
-    maskData = new Uint8Array(imgW * imgH);
-    
-    for (let i = 0; i < imgW * imgH; i++) {
-        const r = imgData[i*4];
-        const g = imgData[i*4+1];
-        const b = imgData[i*4+2];
-        elevationData[i] = (r * 256.0 + g + b / 256.0) - 32768.0;
+function loadTextures() {
+    const texLoader = new THREE.TextureLoader();
+    let loadedCount = 0;
+
+    function checkLoad() {
+        loadedCount++;
+        if (loadedCount === 3) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('ui').style.display = 'block';
+            initTerrain();
+            updateSunAndSky(); // initialize time of day
+        }
     }
-    
-    maskTexture = new THREE.DataTexture(maskData, imgW, imgH, THREE.LuminanceFormat, THREE.UnsignedByteType);
-    maskTexture.magFilter = THREE.NearestFilter;
-    maskTexture.minFilter = THREE.NearestFilter;
-    maskTexture.needsUpdate = true;
-    maskTexture.flipY = true;
-    
-    buildMeshes();
-    updateFloodMask(0); 
-    
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('controls').style.display = 'flex';
+
+    elevTexture = texLoader.load('data/elev_extended.png', checkLoad);
+    satTexture = texLoader.load('data/sat_extended.jpg', checkLoad);
+    maskTexture = texLoader.load('data/elev_extended.png', () => {
+        maskTexture.generateMipmaps = false;
+        maskTexture.minFilter = THREE.NearestFilter;
+        maskTexture.magFilter = THREE.NearestFilter;
+        checkLoad();
+    });
+
+    const img = new Image();
+    img.src = 'data/elev_extended.png';
+    img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imgData = ctx.getImageData(0, 0, img.width, img.height);
+        elevationData = new Float32Array(img.width * img.height);
+        for (let i = 0; i < elevationData.length; i++) {
+            let idx = i * 4;
+            let r = imgData.data[idx];
+            let g = imgData.data[idx+1];
+            let b = imgData.data[idx+2];
+            elevationData[i] = (r * 256.0 + g + b / 256.0) - 32768.0;
+        }
+    };
 }
 
 function updateFloodMask(seaLevel) {
     if (!elevationData) return;
-    for (let i = 0; i < maskData.length; i++) maskData[i] = 0;
+    const canvas = document.createElement('canvas');
+    canvas.width = imgW;
+    canvas.height = imgH;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(imgW, imgH);
     
-    const queue = new Int32Array(imgW * imgH); 
-    let head = 0, tail = 0;
+    let visited = new Uint8Array(imgW * imgH);
+    let queue = [];
     
-    queue[tail++] = 0;
-    maskData[0] = 255; 
-    
-    const redSeaIdx = (imgH - 1) * imgW + 400;
-    if (elevationData[redSeaIdx] <= seaLevel) {
-        queue[tail++] = redSeaIdx;
-        maskData[redSeaIdx] = 255;
+    for (let y = 0; y < imgH; y++) {
+        if (elevationData[y * imgW + 0] <= seaLevel) queue.push(y * imgW + 0);
+        if (elevationData[y * imgW + (imgW - 1)] <= seaLevel) queue.push(y * imgW + (imgW - 1));
+    }
+    for (let x = 0; x < imgW; x++) {
+        if (elevationData[0 * imgW + x] <= seaLevel) queue.push(0 * imgW + x);
+        if (elevationData[(imgH - 1) * imgW + x] <= seaLevel) queue.push((imgH - 1) * imgW + x);
     }
     
-    const dirs = [-1, 1, -imgW, imgW];
-    while (head < tail) {
-        const idx = queue[head++];
-        const x = idx % imgW;
-        for (let d = 0; d < 4; d++) {
-            if (d === 0 && x === 0) continue; 
-            if (d === 1 && x === imgW - 1) continue;
-            const nIdx = idx + dirs[d];
-            if (nIdx >= 0 && nIdx < elevationData.length) {
-                if (maskData[nIdx] === 0 && elevationData[nIdx] <= seaLevel) {
-                    maskData[nIdx] = 255;
-                    queue[tail++] = nIdx;
-                }
+    for (let i = 0; i < queue.length; i++) {
+        visited[queue[i]] = 1;
+    }
+    
+    let head = 0;
+    while(head < queue.length) {
+        let idx = queue[head++];
+        let x = idx % imgW;
+        let y = Math.floor(idx / imgW);
+        
+        let neighbors = [];
+        if (x > 0) neighbors.push(idx - 1);
+        if (x < imgW - 1) neighbors.push(idx + 1);
+        if (y > 0) neighbors.push(idx - imgW);
+        if (y < imgH - 1) neighbors.push(idx + imgW);
+        
+        for (let n of neighbors) {
+            if (!visited[n] && elevationData[n] <= seaLevel) {
+                visited[n] = 1;
+                queue.push(n);
             }
         }
     }
-    maskTexture.needsUpdate = true;
+    
+    for (let i = 0; i < visited.length; i++) {
+        let val = visited[i] ? 255 : 0;
+        let idx = i * 4;
+        imgData.data[idx] = val;
+        imgData.data[idx+1] = val;
+        imgData.data[idx+2] = val;
+        imgData.data[idx+3] = 255;
+    }
+    
+    ctx.putImageData(imgData, 0, 0);
+    const newTex = new THREE.CanvasTexture(canvas);
+    newTex.minFilter = THREE.NearestFilter;
+    newTex.magFilter = THREE.NearestFilter;
+    if (water) water.material.uniforms.tMaskInner.value = newTex;
 }
 
-let terrainUniforms = null;
-let waterUniforms = null;
+function initTerrain() {
+    buildMeshes();
+}
+
+function getSkyColor(time) {
+    if (time < 6) return skyColors.night.clone().lerp(skyColors.dawn, (time - 5));
+    if (time < 12) return skyColors.dawn.clone().lerp(skyColors.noon, (time - 6) / 6);
+    if (time < 18) return skyColors.noon.clone().lerp(skyColors.dusk, (time - 12) / 6);
+    return skyColors.dusk.clone().lerp(skyColors.night, (time - 18));
+}
+
+function updateSunAndSky() {
+    const time = parseFloat(document.getElementById('timeOfDay').value);
+    
+    const currentColor = getSkyColor(time);
+    scene.background = currentColor;
+    scene.fog.color = currentColor;
+    
+    const angle = (time - 12) / 7 * (Math.PI / 2);
+    const sy = Math.cos(angle);
+    const sx = Math.sin(angle);
+    const sz = 0.4;
+    const sunVec = new THREE.Vector3(sx, sy, sz).normalize();
+    
+    let ambientIntensity = 0.65;
+    let diffuseIntensity = 0.7;
+    let lightColor = new THREE.Vector3(1.0, 1.0, 1.0); 
+    
+    if (time < 7 || time > 17) {
+        lightColor = new THREE.Vector3(1.0, 0.7, 0.4);
+        ambientIntensity = 0.4;
+        diffuseIntensity = 0.9;
+    } else if (time < 9 || time > 15) {
+        lightColor = new THREE.Vector3(1.0, 0.9, 0.7);
+    }
+    
+    if (terrainUniforms) {
+        terrainUniforms.sunPosition.value.copy(sunVec);
+        terrainUniforms.skyColor.value.set(currentColor.r, currentColor.g, currentColor.b);
+        terrainUniforms.lightColor.value.copy(lightColor);
+        terrainUniforms.ambientIntensity.value = ambientIntensity;
+        terrainUniforms.diffuseIntensity.value = diffuseIntensity;
+    }
+    
+    if (waterUniforms) {
+        waterUniforms.sunPosition.value.copy(sunVec);
+        waterUniforms.skyColor.value.set(currentColor.r, currentColor.g, currentColor.b);
+        waterUniforms.lightColor.value.copy(lightColor);
+    }
+}
 
 function buildMeshes() {
     terrainUniforms = {
@@ -146,7 +207,13 @@ function buildMeshes() {
         marginX: { value: 0.26 },
         marginY: { value: 0.25 },
         cornerRoundness: { value: 0.18 },
-        fogBlur: { value: 0.17 }
+        fogBlur: { value: 0.17 },
+        sunPosition: { value: new THREE.Vector3(0.0, 1.0, 0.4).normalize() },
+        skyColor: { value: new THREE.Vector3() },
+        lightColor: { value: new THREE.Vector3(1,1,1) },
+        ambientIntensity: { value: 0.65 },
+        diffuseIntensity: { value: 0.7 },
+        showContours: { value: 0.0 }
     };
     
     const vertexShader = `
@@ -154,11 +221,14 @@ function buildMeshes() {
         uniform float exaggeration;
         varying vec2 vUv;
         varying vec3 vWorldPosition;
+        varying float vHeight;
         
         void main() {
             vUv = uv;
             vec4 elev = texture2D(tElevation, uv);
             float heightMeters = (elev.r * 255.0 * 256.0 + elev.g * 255.0 + elev.b * 255.0 / 256.0) - 32768.0;
+            vHeight = heightMeters;
+            
             float scaledHeight = heightMeters * 0.005 * exaggeration;
             vec3 newPosition = position + normal * scaledHeight;
             
@@ -169,6 +239,7 @@ function buildMeshes() {
     `;
     
     const fragmentShader = `
+        
         uniform sampler2D tDiffuse;
         uniform sampler2D tElevation;
         uniform float exaggeration;
@@ -177,8 +248,17 @@ function buildMeshes() {
         uniform float marginY;
         uniform float cornerRoundness;
         uniform float fogBlur;
+        
+        uniform vec3 sunPosition;
+        uniform vec3 skyColor;
+        uniform vec3 lightColor;
+        uniform float ambientIntensity;
+        uniform float diffuseIntensity;
+        uniform float showContours;
+        
         varying vec2 vUv;
         varying vec3 vWorldPosition;
+        varying float vHeight;
         
         float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
         float noise(vec2 p) {
@@ -218,15 +298,24 @@ function buildMeshes() {
             vec3 detailColor = mix(vec3(0.85), vec3(1.15), detailNoise);
             texColor.rgb *= mix(vec3(1.0), detailColor, 0.3);
             
-            vec3 sunDir = normalize(vec3(-0.5, 1.0, 0.3));
-            float diff = max(dot(finalNormal, sunDir), 0.0);
+            float diff = max(dot(finalNormal, sunPosition), 0.0);
             
-            vec3 ambient = vec3(0.65, 0.65, 0.7); 
-            vec3 diffuse = vec3(0.5, 0.45, 0.4) * diff;
+            vec3 ambient = skyColor * ambientIntensity; 
+            vec3 diffuse = lightColor * diffuseIntensity * diff;
             
-            vec3 finalLighting = texColor.rgb * (ambient + diffuse) * 1.1;
+            float ao = smoothstep(-0.2, 0.8, macroNormal.z); 
+            vec3 finalLighting = texColor.rgb * (ambient + diffuse * ao) * 1.1;
             
-            // --- STATIC WATER VISUALS ---
+            if (showContours > 0.5) {
+                float line = abs(fract(vHeight / 50.0 - 0.5) - 0.5) / fwidth(vHeight / 50.0);
+                float contour = 1.0 - clamp(line, 0.0, 1.0);
+                float majorLine = abs(fract(vHeight / 250.0 - 0.5) - 0.5) / fwidth(vHeight / 250.0);
+                float majorContour = 1.0 - clamp(majorLine, 0.0, 1.0);
+                
+                vec3 contourColor = mix(vec3(1.0, 1.0, 1.0), vec3(0.0, 0.8, 1.0), majorContour);
+                finalLighting = mix(finalLighting, contourColor, max(contour * 0.4, majorContour * 0.8));
+            }
+            
             float isStaticWater = smoothstep(0.02, 0.15, texColor.b - max(texColor.r, texColor.g));
             if (isStaticWater > 0.0) {
                 vec2 waveUv = vUv * 1500.0;
@@ -236,25 +325,25 @@ function buildMeshes() {
                     1.2 
                 ));
                 vec3 viewDir = normalize(cameraPosition - vWorldPosition); 
-                vec3 halfVector = normalize(sunDir + viewDir);
-                float specular = pow(max(dot(waterNormal, halfVector), 0.0), 40.0);
-                vec3 waterColor = texColor.rgb * 0.7 + vec3(specular * 0.5);
+                vec3 halfVector = normalize(sunPosition + viewDir);
+                float specular = pow(max(dot(waterNormal, halfVector), 0.0), 60.0);
+                vec3 waterColor = texColor.rgb * 0.7 + lightColor * (specular * 0.7);
                 finalLighting = mix(finalLighting, waterColor, isStaticWater);
             }
-            // -----------------------------
             
-            // --- INFINITE HORIZON: Rounded Box Margin Fade ---
             vec2 p = vUv - 0.5;
             vec2 boxHalfSize = vec2(0.5 - marginX, 0.5 - marginY);
             float r = min(cornerRoundness, min(boxHalfSize.x, boxHalfSize.y));
             vec2 q = abs(p) - boxHalfSize + vec2(r);
             float dist = min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
             
-            // Fade softly inside and outside the boundary
             float edgeFade = 1.0 - smoothstep(-fogBlur, fogBlur, dist);
             
-            vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0);
-            finalLighting = mix(perfectSky, finalLighting, edgeFade);
+            float camDist = distance(cameraPosition, vWorldPosition);
+            float depthFog = 1.0 - exp(-camDist * 0.0035);
+            
+            float totalFog = max(1.0 - edgeFade, clamp(depthFog, 0.0, 1.0));
+            finalLighting = mix(finalLighting, skyColor, totalFog);
             
             gl_FragColor = vec4(finalLighting, 1.0);
         }
@@ -264,7 +353,8 @@ function buildMeshes() {
     geometry.rotateX(-Math.PI / 2);
     
     terrain = new THREE.Mesh(geometry, new THREE.ShaderMaterial({
-        uniforms: terrainUniforms, vertexShader: vertexShader, fragmentShader: fragmentShader, side: THREE.DoubleSide
+        uniforms: terrainUniforms, vertexShader: vertexShader, fragmentShader: fragmentShader, side: THREE.DoubleSide,
+        extensions: { derivatives: true }
     }));
     scene.add(terrain);
 
@@ -278,7 +368,10 @@ function buildMeshes() {
         marginX: { value: 0.26 },
         marginY: { value: 0.25 },
         cornerRoundness: { value: 0.18 },
-        fogBlur: { value: 0.17 }
+        fogBlur: { value: 0.17 },
+        sunPosition: { value: new THREE.Vector3(0.0, 1.0, 0.4).normalize() },
+        skyColor: { value: new THREE.Vector3() },
+        lightColor: { value: new THREE.Vector3(1,1,1) }
     };
     
     const waterVert = `
@@ -332,6 +425,10 @@ function buildMeshes() {
         uniform float marginY;
         uniform float cornerRoundness;
         uniform float fogBlur;
+        uniform vec3 sunPosition;
+        uniform vec3 skyColor;
+        uniform vec3 lightColor;
+        
         varying vec2 vUv;
         varying float vIsWater;
         varying vec3 vWorldPosition;
@@ -350,9 +447,9 @@ function buildMeshes() {
             float elevation = (elevData.r * 255.0 * 256.0 + elevData.g * 255.0 + elevData.b * 255.0 / 256.0) - 32768.0;
             float depth = max(0.0, seaLevel - elevation);
             
-            vec3 shallowWater = vec3(0.0, 0.8, 0.9);
-            vec3 deepWater = vec3(0.0, 0.1, 0.4);
-            float depthFactor = clamp(depth / 150.0, 0.0, 1.0);
+            vec3 shallowWater = vec3(0.1, 0.7, 0.85);
+            vec3 deepWater = vec3(0.0, 0.15, 0.4);
+            float depthFactor = clamp(depth / 80.0, 0.0, 1.0);
             vec3 waterColor = mix(shallowWater, deepWater, depthFactor);
             
             vec3 magmaEdge = vec3(1.0, 0.2, 0.0); 
@@ -365,18 +462,18 @@ function buildMeshes() {
                 1.2 
             ));
             
-            vec3 sunDir = normalize(vec3(1.0, 1.0, 0.8));
             vec3 viewDir = normalize(cameraPosition - vWorldPosition);
-            vec3 halfVector = normalize(sunDir + viewDir);
+            vec3 halfVector = normalize(sunPosition + viewDir);
             
-            float specular = pow(max(dot(normal, halfVector), 0.0), 40.0) * (1.0 - isMagma);
+            float specular = pow(max(dot(normal, halfVector), 0.0), 50.0) * (1.0 - isMagma);
             
             float foam = 0.0;
-            if (depth < 12.0 && isMagma < 0.5) {
-                foam = smoothstep(0.3, 1.0, noise(waveUv * 4.0 + u_time * 2.0)) * (1.0 - depth/12.0);
+            if (depth < 8.0 && isMagma < 0.5) {
+                float foamNoise = noise(waveUv * 5.0 - u_time * 3.0);
+                foam = smoothstep(0.4, 0.8, foamNoise) * (1.0 - depth/8.0);
             }
             
-            vec3 finalColor = waterColor + vec3(specular * 0.8) + vec3(foam);
+            vec3 finalColor = waterColor + lightColor * (specular * 0.9) + vec3(foam);
             
             if (isMagma > 0.5) {
                 float lavaFlow = noise(vUv * 240.0 + u_time * 0.3);
@@ -387,7 +484,6 @@ function buildMeshes() {
                 finalColor = mix(magmaColor * 1.5, crustColor, crustThreshold);
             }
             
-            // --- INFINITE HORIZON: Rounded Box Margin Fade ---
             vec2 p = vUv - 0.5;
             vec2 boxHalfSize = vec2(0.5 - marginX, 0.5 - marginY);
             float r = min(cornerRoundness, min(boxHalfSize.x, boxHalfSize.y));
@@ -396,10 +492,13 @@ function buildMeshes() {
             
             float edgeFade = 1.0 - smoothstep(-fogBlur, fogBlur, dist);
             
-            vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0); 
-            finalColor = mix(perfectSky, finalColor, edgeFade);
+            float camDist = distance(cameraPosition, vWorldPosition);
+            float depthFog = 1.0 - exp(-camDist * 0.0035);
             
-            float alpha = mix(clamp(depth / 15.0, 0.6, 0.95), 1.0, isMagma);
+            float totalFog = max(1.0 - edgeFade, clamp(depthFog, 0.0, 1.0));
+            finalColor = mix(finalColor, skyColor, totalFog);
+            
+            float alpha = mix(clamp(depth / 10.0, 0.4, 0.98), 1.0, isMagma);
             gl_FragColor = vec4(finalColor, alpha);
         }
     `;
@@ -411,17 +510,36 @@ function buildMeshes() {
     scene.add(water);
     
     const slider = document.getElementById('seaLevel');
-    const valLabel = document.getElementById('val');
+    const valLabel = document.getElementById('valLevel');
     slider.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
-        valLabel.innerText = val;
+        valLabel.innerText = val.toFixed(1) + 'm';
         currentSeaLevel = val;
         updateFloodMask(val);
         waterUniforms.seaLevel.value = val;
     });
     
+    const timeSlider = document.getElementById('timeOfDay');
+    const timeLabel = document.getElementById('valTime');
+    timeSlider.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        const hours = Math.floor(val);
+        const mins = Math.floor((val - hours) * 60).toString().padStart(2, '0');
+        timeLabel.innerText = `${hours}:${mins}`;
+        updateSunAndSky();
+    });
+    
     document.getElementById('magmaMode').addEventListener('change', (e) => {
         waterUniforms.isMagma.value = e.target.checked ? 1.0 : 0.0;
+    });
+    
+    document.getElementById('showContours').addEventListener('change', (e) => {
+        terrainUniforms.showContours.value = e.target.checked ? 1.0 : 0.0;
+    });
+    
+    document.getElementById('cinematicCam').addEventListener('change', (e) => {
+        cinematicCam = e.target.checked;
+        controls.enableDamping = cinematicCam;
     });
 }
 
@@ -432,7 +550,11 @@ function animate() {
     controls.target.x = Math.max(-40, Math.min(40, controls.target.x));
     controls.target.z = Math.max(-80, Math.min(80, controls.target.z));
     
-    controls.update();
+    if (cinematicCam) {
+        controls.update();
+    } else {
+        controls.update();
+    }
     
     if (elevationData) {
         let cx = camera.position.x;
@@ -451,19 +573,19 @@ function animate() {
             h = elevationData[py * imgW + px] * 0.005 * 0.5;
         }
         
-        if (camera.position.y < h + 1.5) {
-            camera.position.y = h + 1.5;
+        if (camera.position.y < h + 2.0) {
+            camera.position.y = h + 2.0;
+            controls.target.y = Math.max(controls.target.y, h + 2.0 - 5.0); 
         }
     }
     
-    if (terrain) {
-        terrain.material.uniforms.u_time.value = clock.getElapsedTime();
-    }
-    if (water) {
-        water.material.uniforms.u_time.value = clock.getElapsedTime();
-    }
+    if (terrain) terrain.material.uniforms.u_time.value = clock.getElapsedTime();
+    if (water) water.material.uniforms.u_time.value = clock.getElapsedTime();
+    
     renderer.render(scene, camera);
 }
+
+init();
 animate();
 
 window.addEventListener('resize', () => {

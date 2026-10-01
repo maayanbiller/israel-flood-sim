@@ -8,18 +8,29 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
-    <div id="loading">GENERATING NEXT-GEN TERRAIN...</div>
-    <div id="ui">
-        <h2>Flood Controls</h2>
-        <div class="controls" id="controls" style="display:none;">
-            <label>Sea Level: <span id="val">0</span> meters</label>
-            <input type="range" id="seaLevel" min="0" max="1500" value="0">
-            <label style="margin-top: 5px; font-size: 1rem; cursor: pointer; display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" id="magmaMode" style="width: 16px; height: 16px;"> 🔥 Magma Mode
-            </label>
+    <div id="loading">Initializing Engine...</div>
+    <div id="ui" style="display:none;">
+        <h2>TERRA<span style="color: #00a8ff;">SIM</span></h2>
+        <div class="subtitle">Topographic Engine v2.0</div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label>Global Sea Level <span class="val-display" id="valLevel">0.0m</span></label>
+                <input type="range" id="seaLevel" min="-450" max="2000" value="0" step="1">
+            </div>
+            
+            <div class="control-group">
+                <label>Time of Day <span class="val-display" id="valTime">12:00</span></label>
+                <input type="range" id="timeOfDay" min="5" max="19" value="12" step="0.1">
+            </div>
+        </div>
+        
+        <div class="toggles">
+            <label class="toggle-label"><input type="checkbox" id="magmaMode"> Volcanic Magma Mode</label>
+            <label class="toggle-label"><input type="checkbox" id="showContours"> Topographic Contours</label>
+            <label class="toggle-label"><input type="checkbox" id="cinematicCam" checked> Cinematic Damping</label>
         </div>
     </div>
-    
     <script src="js/app.js"></script>
 </body>
 </html>
