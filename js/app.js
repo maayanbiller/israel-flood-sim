@@ -241,8 +241,8 @@ function buildMeshes() {
             
             // INFINITE HORIZON: Bulletproof elliptical fade
             float distFromCenter = length((vUv - 0.5) * 2.0); 
-            // Fade starts earlier at 0.4 for a softer, more gradual atmospheric vignette
-            float edgeFade = 1.0 - smoothstep(0.4, 0.95, distFromCenter);
+            // Fade starts at 0.2 for an extremely soft, slow atmospheric vignette
+            float edgeFade = 1.0 - smoothstep(0.2, 0.95, distFromCenter);
             
             vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0);
             finalLighting = mix(perfectSky, finalLighting, edgeFade);
@@ -371,7 +371,7 @@ function buildMeshes() {
             }
             
             float distFromCenter = length((vUv - 0.5) * 2.0);
-            float edgeFade = 1.0 - smoothstep(0.4, 0.95, distFromCenter);
+            float edgeFade = 1.0 - smoothstep(0.2, 0.95, distFromCenter);
             
             vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0); 
             finalColor = mix(perfectSky, finalColor, edgeFade);
