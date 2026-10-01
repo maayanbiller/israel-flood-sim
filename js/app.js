@@ -143,8 +143,10 @@ function buildMeshes() {
         tElevation: { value: elevTexture },
         exaggeration: { value: 0.5 },
         u_time: { value: 0.0 },
-        fadeStart: { value: 0.2 },
-        fadeEnd: { value: 0.95 }
+        marginX: { value: 0.05 },
+        marginY: { value: 0.05 },
+        cornerRoundness: { value: 0.20 },
+        fogBlur: { value: 0.15 }
     };
     
     const vertexShader = `
@@ -171,8 +173,10 @@ function buildMeshes() {
         uniform sampler2D tElevation;
         uniform float exaggeration;
         uniform float u_time;
-        uniform float fadeStart;
-        uniform float fadeEnd;
+        uniform float marginX;
+        uniform float marginY;
+        uniform float cornerRoundness;
+        uniform float fogBlur;
         varying vec2 vUv;
         varying vec3 vWorldPosition;
         
@@ -223,9 +227,7 @@ function buildMeshes() {
             vec3 finalLighting = texColor.rgb * (ambient + diffuse) * 1.1;
             
             // --- STATIC WATER VISUALS ---
-            // Detect deep blue pixels in the satellite image to mark natural water bodies
             float isStaticWater = smoothstep(0.02, 0.15, texColor.b - max(texColor.r, texColor.g));
-            
             if (isStaticWater > 0.0) {
                 vec2 waveUv = vUv * 1500.0;
                 vec3 waterNormal = normalize(vec3(
@@ -233,20 +235,23 @@ function buildMeshes() {
                     noise(waveUv + vec2(0.0, 0.1) + u_time * 0.5) - noise(waveUv - vec2(0.0, 0.1) - u_time * 0.5),
                     1.2 
                 ));
-                
                 vec3 viewDir = normalize(cameraPosition - vWorldPosition); 
                 vec3 halfVector = normalize(sunDir + viewDir);
                 float specular = pow(max(dot(waterNormal, halfVector), 0.0), 40.0);
-                
                 vec3 waterColor = texColor.rgb * 0.7 + vec3(specular * 0.5);
                 finalLighting = mix(finalLighting, waterColor, isStaticWater);
             }
             // -----------------------------
             
-            // INFINITE HORIZON: Bulletproof elliptical fade
-            float distFromCenter = length((vUv - 0.5) * 2.0); 
-            // Fade starts at dynamic tuner values
-            float edgeFade = 1.0 - smoothstep(fadeStart, fadeEnd, distFromCenter);
+            // --- INFINITE HORIZON: Rounded Box Margin Fade ---
+            vec2 p = vUv - 0.5;
+            vec2 boxHalfSize = vec2(0.5 - marginX, 0.5 - marginY);
+            float r = min(cornerRoundness, min(boxHalfSize.x, boxHalfSize.y));
+            vec2 q = abs(p) - boxHalfSize + vec2(r);
+            float dist = min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+            
+            // Fade softly inside and outside the boundary
+            float edgeFade = 1.0 - smoothstep(-fogBlur, fogBlur, dist);
             
             vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0);
             finalLighting = mix(perfectSky, finalLighting, edgeFade);
@@ -270,8 +275,10 @@ function buildMeshes() {
         seaLevel: { value: 0.0 },
         u_time: { value: 0.0 },
         isMagma: { value: 0.0 },
-        fadeStart: { value: 0.2 },
-        fadeEnd: { value: 0.95 }
+        marginX: { value: 0.05 },
+        marginY: { value: 0.05 },
+        cornerRoundness: { value: 0.20 },
+        fogBlur: { value: 0.15 }
     };
     
     const waterVert = `
@@ -321,8 +328,10 @@ function buildMeshes() {
         uniform float seaLevel;
         uniform float u_time;
         uniform float isMagma;
-        uniform float fadeStart;
-        uniform float fadeEnd;
+        uniform float marginX;
+        uniform float marginY;
+        uniform float cornerRoundness;
+        uniform float fogBlur;
         varying vec2 vUv;
         varying float vIsWater;
         varying vec3 vWorldPosition;
@@ -378,8 +387,14 @@ function buildMeshes() {
                 finalColor = mix(magmaColor * 1.5, crustColor, crustThreshold);
             }
             
-            float distFromCenter = length((vUv - 0.5) * 2.0);
-            float edgeFade = 1.0 - smoothstep(fadeStart, fadeEnd, distFromCenter);
+            // --- INFINITE HORIZON: Rounded Box Margin Fade ---
+            vec2 p = vUv - 0.5;
+            vec2 boxHalfSize = vec2(0.5 - marginX, 0.5 - marginY);
+            float r = min(cornerRoundness, min(boxHalfSize.x, boxHalfSize.y));
+            vec2 q = abs(p) - boxHalfSize + vec2(r);
+            float dist = min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+            
+            float edgeFade = 1.0 - smoothstep(-fogBlur, fogBlur, dist);
             
             vec3 perfectSky = vec3(102.0/255.0, 138.0/255.0, 153.0/255.0); 
             finalColor = mix(perfectSky, finalColor, edgeFade);
@@ -410,28 +425,47 @@ function buildMeshes() {
     });
     
     // --- FOG TUNER LOGIC ---
-    const fadeStartSlider = document.getElementById('fadeStartSlider');
-    const fadeEndSlider = document.getElementById('fadeEndSlider');
-    const lblStart = document.getElementById('lblStart');
-    const lblEnd = document.getElementById('lblEnd');
+    const marginXSlider = document.getElementById('marginXSlider');
+    const marginYSlider = document.getElementById('marginYSlider');
+    const roundnessSlider = document.getElementById('roundnessSlider');
+    const blurSlider = document.getElementById('blurSlider');
     
-    if (fadeStartSlider && fadeEndSlider) {
-        fadeStartSlider.addEventListener('input', (e) => {
+    const lblMX = document.getElementById('lblMX');
+    const lblMY = document.getElementById('lblMY');
+    const lblCR = document.getElementById('lblCR');
+    const lblFB = document.getElementById('lblFB');
+    
+    if (marginXSlider) {
+        marginXSlider.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
-            lblStart.innerText = val.toFixed(2);
-            terrainUniforms.fadeStart.value = val;
-            waterUniforms.fadeStart.value = val;
+            lblMX.innerText = val.toFixed(2);
+            terrainUniforms.marginX.value = val;
+            waterUniforms.marginX.value = val;
         });
         
-        fadeEndSlider.addEventListener('input', (e) => {
+        marginYSlider.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
-            lblEnd.innerText = val.toFixed(2);
-            terrainUniforms.fadeEnd.value = val;
-            waterUniforms.fadeEnd.value = val;
+            lblMY.innerText = val.toFixed(2);
+            terrainUniforms.marginY.value = val;
+            waterUniforms.marginY.value = val;
+        });
+        
+        roundnessSlider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            lblCR.innerText = val.toFixed(2);
+            terrainUniforms.cornerRoundness.value = val;
+            waterUniforms.cornerRoundness.value = val;
+        });
+        
+        blurSlider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            lblFB.innerText = val.toFixed(2);
+            terrainUniforms.fogBlur.value = val;
+            waterUniforms.fogBlur.value = val;
         });
         
         document.getElementById('copyFogBtn').addEventListener('click', () => {
-            const text = `fadeStart: ${fadeStartSlider.value}, fadeEnd: ${fadeEndSlider.value}`;
+            const text = `marginX: ${marginXSlider.value}, marginY: ${marginYSlider.value}, roundness: ${roundnessSlider.value}, blur: ${blurSlider.value}`;
             navigator.clipboard.writeText(text).then(() => {
                 const btn = document.getElementById('copyFogBtn');
                 btn.innerText = 'Copied!';
