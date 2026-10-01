@@ -143,10 +143,10 @@ function buildMeshes() {
         tElevation: { value: elevTexture },
         exaggeration: { value: 0.5 },
         u_time: { value: 0.0 },
-        marginX: { value: 0.05 },
-        marginY: { value: 0.05 },
-        cornerRoundness: { value: 0.20 },
-        fogBlur: { value: 0.15 }
+        marginX: { value: 0.26 },
+        marginY: { value: 0.25 },
+        cornerRoundness: { value: 0.18 },
+        fogBlur: { value: 0.17 }
     };
     
     const vertexShader = `
@@ -275,10 +275,10 @@ function buildMeshes() {
         seaLevel: { value: 0.0 },
         u_time: { value: 0.0 },
         isMagma: { value: 0.0 },
-        marginX: { value: 0.05 },
-        marginY: { value: 0.05 },
-        cornerRoundness: { value: 0.20 },
-        fogBlur: { value: 0.15 }
+        marginX: { value: 0.26 },
+        marginY: { value: 0.25 },
+        cornerRoundness: { value: 0.18 },
+        fogBlur: { value: 0.17 }
     };
     
     const waterVert = `
@@ -423,56 +423,6 @@ function buildMeshes() {
     document.getElementById('magmaMode').addEventListener('change', (e) => {
         waterUniforms.isMagma.value = e.target.checked ? 1.0 : 0.0;
     });
-    
-    // --- FOG TUNER LOGIC ---
-    const marginXSlider = document.getElementById('marginXSlider');
-    const marginYSlider = document.getElementById('marginYSlider');
-    const roundnessSlider = document.getElementById('roundnessSlider');
-    const blurSlider = document.getElementById('blurSlider');
-    
-    const lblMX = document.getElementById('lblMX');
-    const lblMY = document.getElementById('lblMY');
-    const lblCR = document.getElementById('lblCR');
-    const lblFB = document.getElementById('lblFB');
-    
-    if (marginXSlider) {
-        marginXSlider.addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            lblMX.innerText = val.toFixed(2);
-            terrainUniforms.marginX.value = val;
-            waterUniforms.marginX.value = val;
-        });
-        
-        marginYSlider.addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            lblMY.innerText = val.toFixed(2);
-            terrainUniforms.marginY.value = val;
-            waterUniforms.marginY.value = val;
-        });
-        
-        roundnessSlider.addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            lblCR.innerText = val.toFixed(2);
-            terrainUniforms.cornerRoundness.value = val;
-            waterUniforms.cornerRoundness.value = val;
-        });
-        
-        blurSlider.addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            lblFB.innerText = val.toFixed(2);
-            terrainUniforms.fogBlur.value = val;
-            waterUniforms.fogBlur.value = val;
-        });
-        
-        document.getElementById('copyFogBtn').addEventListener('click', () => {
-            const text = `marginX: ${marginXSlider.value}, marginY: ${marginYSlider.value}, roundness: ${roundnessSlider.value}, blur: ${blurSlider.value}`;
-            navigator.clipboard.writeText(text).then(() => {
-                const btn = document.getElementById('copyFogBtn');
-                btn.innerText = 'Copied!';
-                setTimeout(() => btn.innerText = 'Copy Settings', 2000);
-            });
-        });
-    }
 }
 
 const clock = new THREE.Clock();
