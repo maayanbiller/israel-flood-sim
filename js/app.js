@@ -431,7 +431,7 @@ function buildMeshes() {
         });
         
         document.getElementById('copyFogBtn').addEventListener('click', () => {
-            const text = \`fadeStart: \${fadeStartSlider.value}, fadeEnd: \${fadeEndSlider.value}\`;
+            const text = `fadeStart: ${fadeStartSlider.value}, fadeEnd: ${fadeEndSlider.value}`;
             navigator.clipboard.writeText(text).then(() => {
                 const btn = document.getElementById('copyFogBtn');
                 btn.innerText = 'Copied!';
